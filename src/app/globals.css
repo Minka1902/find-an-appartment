@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #ffffff;
+  --color-surface-raised: #f6f7f9;
+  --color-surface-sunken: #eceef2;
+  --color-border-subtle: #dfe3e8;
+  --color-ink: #16191d;
+  --color-ink-muted: #5c6672;
+  --color-ink-faint: #8b95a1;
+  --color-accent: #2563eb;
+  --color-accent-soft: #e6efff;
+  --color-positive: #0f9d58;
+  --color-caution: #c77700;
+  --color-negative: #d23f31;
+}
+
+:root {
+  color-scheme: light;
+}
+
+/* Unlayered on purpose: `@theme` emits its variables inside the theme cascade
+   layer, and unlayered rules beat layered ones regardless of order. Putting the
+   dark values in a layer would leave them losing to the light defaults. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --color-surface: #101216;
+    --color-surface-raised: #191d23;
+    --color-surface-sunken: #0a0c0f;
+    --color-border-subtle: #2a2f38;
+    --color-ink: #eef1f5;
+    --color-ink-muted: #9aa5b1;
+    --color-ink-faint: #6f7987;
+    --color-accent: #5b93ff;
+    --color-accent-soft: #1b2740;
+    --color-positive: #35c07a;
+    --color-caution: #e0a13a;
+    --color-negative: #f0705f;
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  /* The map screen manages its own scrolling; the page itself never scrolls
+     sideways at any width. */
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Touch devices need bigger targets than a mouse does. Applied to the controls
+   that are genuinely hard to hit: slider thumbs and icon-only buttons. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Respect a user's reduced-motion preference for the sheet and map easing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* MapLibre ships its own stylesheet; these override just enough to fit in. */
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}
+
+.maplibregl-canvas:focus {
+  outline: none;
+}

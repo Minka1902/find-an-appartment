@@ -10,7 +10,9 @@ import type {
   CommuteAggregation,
   Household,
   Person,
+  UnreachablePolicy,
 } from "@/lib/scoring/types";
+import { parseHouseholdOrDemo } from "./household-schema";
 
 function newId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -55,6 +57,7 @@ interface HouseholdState {
   setWeight(key: string, value: number): void;
   resetWeights(): void;
   setAggregation(aggregation: CommuteAggregation): void;
+  setUnreachablePolicy(policy: UnreachablePolicy): void;
   setCarCount(count: number): void;
   setRequiresStreetParking(required: boolean): void;
   setMaxCost(maxCost: number | null): void;
@@ -148,6 +151,11 @@ export const useHouseholdStore = create<HouseholdState>()(
           household: { ...state.household, commuteAggregation },
         })),
 
+      setUnreachablePolicy: (unreachablePolicy) =>
+        set((state) => ({
+          household: { ...state.household, unreachablePolicy },
+        })),
+
       setCarCount: (carCount) =>
         set((state) => ({
           household: {
@@ -173,7 +181,28 @@ export const useHouseholdStore = create<HouseholdState>()(
     }),
     {
       name: "where-to-live/household",
-      version: 1,
+      version: 2,
+
+      /**
+       * `localStorage` is untrusted input: user-writable, and it survives across
+       * deploys that change the shape of `Household`. Validating it means a
+       * corrupt entry costs the user their setup — but an unvalidated one
+       * crashes the engine on boot, which costs them the same setup *and*
+       * leaves no way back into the app.
+       *
+       * Done in `merge` rather than `migrate` deliberately. `migrate` only runs
+       * when the stored version differs from `version` above, so a v2 entry
+       * that was hand-edited or truncated would sail straight through it.
+       * `merge` runs on every rehydration, which is the actual guarantee we
+       * want. It also subsumes the v1 -> v2 migration, since the schema
+       * defaults the newly-added `unreachablePolicy`.
+       */
+      merge: (persisted, current) => ({
+        ...current,
+        household: parseHouseholdOrDemo(
+          (persisted as { household?: unknown } | null)?.household,
+        ),
+      }),
       // Rehydrate explicitly after mount rather than during store creation, so
       // the first client render matches the server's and hydration is clean.
       // `StoreHydrator` kicks it off.

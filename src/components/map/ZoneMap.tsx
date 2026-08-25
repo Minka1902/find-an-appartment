@@ -114,6 +114,11 @@ export function ZoneMap({
    * exactly once, whichever order they happen in.
    */
   const [mapReady, setMapReady] = useState(false);
+  /**
+   * Whether the basemap tiles failed. Purely a disclosure flag — the cells do
+   * not depend on the basemap, so this changes what we *say*, not what renders.
+   */
+  const [basemapFailed, setBasemapFailed] = useState(false);
   // Held in a ref so the click handler can be installed once without going
   // stale — reinstalling map listeners on every render is needless churn.
   const onSelectRef = useRef(onSelect);
@@ -156,8 +161,25 @@ export function ZoneMap({
     if (map.isStyleLoaded()) setMapReady(true);
     else map.once("style.load", () => setMapReady(true));
 
+    /**
+     * MapLibre reports failures through an `error` event and throws nothing.
+     * With no handler it installs a console-only default, so a blocked tile
+     * host or a failed worker fetch produced an entirely silent grey rectangle
+     * — indistinguishable from a map that simply hadn't loaded yet.
+     *
+     * A raster tile failure is not fatal: the choropleth is a separate GeoJSON
+     * source and renders fine over the flat background. So this notes the
+     * degradation for the UI to disclose rather than tearing anything down.
+     */
+    const onError = (event: { error?: { message?: string } }) => {
+      console.error("MapLibre:", event.error?.message ?? event);
+      setBasemapFailed(true);
+    };
+    map.on("error", onError);
+
     return () => {
       setMapReady(false);
+      map.off("error", onError);
       map.remove();
       mapRef.current = null;
     };
@@ -266,7 +288,23 @@ export function ZoneMap({
     mapRef.current?.setPadding(padding);
   }, [padding]);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" />
+
+      {/* Disclosed rather than hidden: the cells below are still correct, and
+          a user who can see the scores but no streets deserves to know which
+          half is missing. */}
+      {basemapFailed ? (
+        <div
+          role="status"
+          className="pointer-events-none absolute right-3 bottom-8 left-3 z-10 mx-auto max-w-xs rounded-lg border border-caution/35 bg-surface/95 px-3 py-2 text-center text-[11px] leading-relaxed text-ink-muted shadow-sm backdrop-blur"
+        >
+          Street map unavailable — the ranked areas below are unaffected.
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

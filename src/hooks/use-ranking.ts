@@ -1,12 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
+import { useAsync } from "@/hooks/use-async";
 import { provider } from "@/lib/data/provider";
 import type { ZoneDataset } from "@/lib/fixtures/zones";
 import { scoreZones } from "@/lib/scoring/score-zones";
 import { householdTargets } from "@/lib/scoring/targets";
-import type { Household, ScoringResult, ZoneTravel } from "@/lib/scoring/types";
+import type {
+  Household,
+  Rejection,
+  ScoringResult,
+  ZoneTravel,
+} from "@/lib/scoring/types";
 import { useHouseholdStore } from "@/store/household";
 
 /**
@@ -26,52 +32,49 @@ function travelKey(household: Household): string {
 }
 
 /** Tier A: the metro's cell grid and static metrics. Loaded once. */
-export function useZoneDataset(): ZoneDataset | null {
-  const [dataset, setDataset] = useState<ZoneDataset | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    provider.getZoneDataset().then((next) => {
-      if (!cancelled) setDataset(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return dataset;
+export function useZoneDataset() {
+  const run = useCallback(() => provider.getZoneDataset(), []);
+  return useAsync<ZoneDataset>(run, "zone-dataset");
 }
 
-/** Tier B: isochrone-derived travel times. Recomputed only on address change. */
-export function useTravel(household: Household): Record<string, ZoneTravel> | null {
-  const [travel, setTravel] = useState<Record<string, ZoneTravel> | null>(null);
+/**
+ * Tier B: isochrone-derived travel times. Recomputed only on address change.
+ *
+ * The key is `travelKey(household)` — target coordinates only. Weight changes
+ * must never appear in it: that is the whole point of the tier split, and
+ * including the household would rebuild every isochrone on each slider drag.
+ */
+export function useTravel(household: Household) {
   const key = travelKey(household);
-  const lastKey = useRef<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    lastKey.current = key;
-
-    provider.getTravel(household).then((next) => {
-      // Drop results from a superseded household edit.
-      if (!cancelled && lastKey.current === key) setTravel(next);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-    // `household` is intentionally excluded: only the targets matter, and
-    // including it would recompute isochrones on every slider drag.
+  const run = useCallback(
+    () => provider.getTravel(household),
+    // `household` is deliberately excluded: it gets a new identity on every
+    // edit, weights included, and re-running on that would defeat the tier
+    // split. `key` covers the only changes that alter the isochrones.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+    [key],
+  );
 
-  return travel;
+  return useAsync<Record<string, ZoneTravel>>(run, key);
 }
 
 export interface RankingState {
   result: ScoringResult | null;
   /** True until both the grid and the travel times are in. */
   isLoading: boolean;
+  /** Non-null when either tier failed. Distinguishes failed from slow. */
+  error: Error | null;
+  /** Re-runs whichever tier failed. */
+  retry(): void;
+  /**
+   * `h3 -> rejection` for zones the hard filters dropped.
+   *
+   * `ScoringResult.rejections` is an array, but every consumer wants a lookup:
+   * clicking a greyed-out cell on the map has only its h3 to go on. Built once
+   * here rather than scanning thousands of rejections per click.
+   */
+  rejectionsByH3: Map<string, Rejection>;
 }
 
 /**
@@ -87,16 +90,35 @@ export function useRanking(): RankingState {
   const travel = useTravel(household);
 
   const result = useMemo(() => {
-    if (!dataset || !travel) return null;
+    if (!dataset.data || !travel.data) return null;
     return scoreZones({
-      zones: dataset.zones,
-      metrics: dataset.metrics,
-      travel,
+      zones: dataset.data.zones,
+      metrics: dataset.data.metrics,
+      travel: travel.data,
       household,
     });
-  }, [dataset, travel, household]);
+  }, [dataset.data, travel.data, household]);
 
-  return { result, isLoading: !dataset || !travel };
+  const rejectionsByH3 = useMemo(() => {
+    const byH3 = new Map<string, Rejection>();
+    for (const rejection of result?.rejections ?? []) {
+      byH3.set(rejection.h3, rejection);
+    }
+    return byH3;
+  }, [result]);
+
+  const retry = useCallback(() => {
+    if (dataset.error) dataset.retry();
+    if (travel.error) travel.retry();
+  }, [dataset, travel]);
+
+  return {
+    result,
+    isLoading: dataset.isLoading || travel.isLoading,
+    error: dataset.error ?? travel.error,
+    retry,
+    rejectionsByH3,
+  };
 }
 
 /**

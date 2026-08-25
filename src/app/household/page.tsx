@@ -3,6 +3,7 @@
 import { Check, Copy, Share2, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { CardListSkeleton, Skeleton } from "@/components/layout/states";
 import { useHydrated } from "@/hooks/use-ranking";
 import { commuteWeight } from "@/lib/scoring/metrics/commute";
 import { useHouseholdStore } from "@/store/household";
@@ -25,6 +26,7 @@ export default function HouseholdPage() {
   const updatePerson = useHouseholdStore((state) => state.updatePerson);
 
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   useEffect(() => {
     if (!copied) return;
@@ -34,8 +36,14 @@ export default function HouseholdPage() {
 
   if (!hydrated) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        Loading…
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-5xl px-4 py-5 lg:px-8 lg:py-8">
+          <Skeleton className="h-7 w-40" />
+          <div className="mt-2 mb-6">
+            <Skeleton className="h-4 w-64" />
+          </div>
+          <CardListSkeleton count={2} />
+        </div>
       </div>
     );
   }
@@ -64,8 +72,17 @@ export default function HouseholdPage() {
         // Cancelled — fall through to copy.
       }
     }
-    await navigator.clipboard.writeText(inviteUrl);
-    setCopied(true);
+
+    // The clipboard rejects in insecure contexts and whenever the permission is
+    // denied. Left unguarded this threw past the caller, so the button did
+    // nothing at all and never explained why — the link is right there on
+    // screen, so the honest fallback is to say "select it and copy".
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied(true);
+    } catch {
+      setCopyFailed(true);
+    }
   };
 
   return (
@@ -184,6 +201,13 @@ export default function HouseholdPage() {
                   </>
                 )}
               </button>
+
+              {copyFailed ? (
+                <p role="alert" className="mt-2 text-[11px] text-caution">
+                  This browser blocked clipboard access — select the link above
+                  and copy it manually.
+                </p>
+              ) : null}
 
               <p className="mt-3 border-t border-border-subtle pt-3 text-[11px] leading-relaxed text-ink-faint">
                 Sharing isn&apos;t wired to a backend yet — the household lives

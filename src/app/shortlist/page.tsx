@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { AlertTriangle, Car, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 
+import {
+  CardListSkeleton,
+  ErrorState,
+  Skeleton,
+} from "@/components/layout/states";
+import { useAsync } from "@/hooks/use-async";
 import { provider } from "@/lib/data/provider";
 import type { Listing } from "@/lib/fixtures/listings";
 import { useHydrated, useRanking } from "@/hooks/use-ranking";
@@ -25,32 +31,47 @@ const TOP_CELLS = 8;
 
 export default function ShortlistPage() {
   const hydrated = useHydrated();
-  const { result, isLoading } = useRanking();
-  const [listings, setListings] = useState<Listing[]>([]);
+  const { result, isLoading, error, retry } = useRanking();
 
   const topZones = useMemo(
     () => result?.scored.slice(0, TOP_CELLS) ?? [],
     [result],
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    // Always goes through the provider, including for an empty top set, so the
-    // state update stays asynchronous.
-    provider.getListings(topZones).then((next) => {
-      if (!cancelled) setListings(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [topZones]);
+  // Keyed on the cell set rather than the array identity, so a re-rank that
+  // leaves the top cells unchanged doesn't rebuild the listings.
+  const listingsKey = topZones.map((zone) => zone.zone.h3).join(",");
+  const loadListings = useCallback(
+    () => provider.getListings(topZones),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [listingsKey],
+  );
+  const listings = useAsync<Listing[]>(loadListings, listingsKey);
 
   const people = result?.scored[0]?.commutes ?? [];
 
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <ErrorState
+          title="Couldn't build your shortlist"
+          message={`The area ranking failed to load. ${error.message}`}
+          onRetry={retry}
+        />
+      </div>
+    );
+  }
+
   if (!hydrated || isLoading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        Building your shortlist…
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-6xl px-4 py-5 lg:px-8 lg:py-8">
+          <Skeleton className="h-6 w-40" />
+          <div className="mt-2 mb-5">
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <CardListSkeleton count={4} />
+        </div>
       </div>
     );
   }
@@ -84,7 +105,7 @@ export default function ShortlistPage() {
 
         {/* Compact: cards. */}
         <ul className="mt-5 space-y-3 lg:hidden">
-          {listings.map((listing) => (
+          {(listings.data ?? []).map((listing) => (
             <li key={listing.id}>
               <ListingCard listing={listing} />
             </li>
@@ -122,7 +143,7 @@ export default function ShortlistPage() {
               </thead>
 
               <tbody>
-                {listings.map((listing) => (
+                {(listings.data ?? []).map((listing) => (
                   <tr
                     key={listing.id}
                     className="border-b border-border-subtle last:border-0"

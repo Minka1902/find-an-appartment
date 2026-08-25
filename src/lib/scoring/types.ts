@@ -16,6 +16,17 @@ export type Confidence = "high" | "medium" | "low";
 /** How a household resolves disagreement between its members' commutes. */
 export type CommuteAggregation = "mean" | "max" | "balanced";
 
+/**
+ * What to do with a zone nobody can route to (spec open decision #1).
+ *
+ * `reject` drops it entirely; `penalty` keeps it and scores the commute as
+ * `UNREACHABLE_PENALTY_MINUTES`. This lives on the household rather than in
+ * `config.ts` because it is a genuine preference, not a tuning constant: with
+ * arbitrary workplaces a peripheral cell can be unreachable by transit and a
+ * perfectly ordinary drive, and only the household knows which it meant.
+ */
+export type UnreachablePolicy = "reject" | "penalty";
+
 // ---------------------------------------------------------------------------
 // Household
 // ---------------------------------------------------------------------------
@@ -57,6 +68,8 @@ export interface Household {
   /** metricKey -> slider position, 0–1. */
   weights: Record<string, number>;
   commuteAggregation: CommuteAggregation;
+  /** Whether an unroutable zone is dropped or merely penalised. */
+  unreachablePolicy: UnreachablePolicy;
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { BottomSheet } from "@/components/layout/BottomSheet";
 import { ResponsiveDetailPanel } from "@/components/layout/ResponsiveDetailPanel";
+import { ErrorState, RankingSkeleton } from "@/components/layout/states";
 import { MapLegend } from "@/components/map/MapLegend";
 import { RankedList } from "@/components/map/RankedList";
 import { WeightSliders } from "@/components/weights/WeightSliders";
@@ -36,7 +37,7 @@ export default function MapPage() {
   const selectZone = useHouseholdStore((state) => state.selectZone);
 
   const dataset = useZoneDataset();
-  const { result, isLoading } = useRanking();
+  const { result, isLoading, error, retry } = useRanking();
 
   const [snapIndex, setSnapIndex] = useState(HALF);
   const [sheetHeight, setSheetHeight] = useState(0);
@@ -72,7 +73,15 @@ export default function MapPage() {
     [isWide, sheetHeight],
   );
 
-  const controls = (
+  const controls = error ? (
+    <ErrorState
+      title="Couldn't rank areas"
+      message={`The area data failed to load. ${error.message}`}
+      onRetry={retry}
+    />
+  ) : isLoading ? (
+    <RankingSkeleton />
+  ) : (
     <div className="space-y-6 pb-4">
       <WeightSliders household={household} />
       <div>
@@ -91,9 +100,11 @@ export default function MapPage() {
   const summary = (
     <div className="flex items-baseline justify-between gap-2">
       <span className="text-sm font-semibold">
-        {isLoading
-          ? "Ranking areas…"
-          : `${(result?.scored.length ?? 0).toLocaleString()} areas match`}
+        {error
+          ? "Ranking unavailable"
+          : isLoading
+            ? "Ranking areas…"
+            : `${(result?.scored.length ?? 0).toLocaleString()} areas match`}
       </span>
       {result && result.rejections.length > 0 ? (
         <span className="text-[11px] text-ink-faint">
@@ -105,8 +116,11 @@ export default function MapPage() {
 
   if (!hydrated) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        Loading your household…
+      <div className="flex h-full min-h-0">
+        <aside className="hidden w-[380px] shrink-0 flex-col border-r border-border-subtle px-5 pt-4 lg:flex">
+          <RankingSkeleton />
+        </aside>
+        <div className="min-h-0 flex-1 bg-surface-sunken" />
       </div>
     );
   }
@@ -127,7 +141,7 @@ export default function MapPage() {
 
       <div className="relative min-h-0 min-w-0 flex-1">
         <ZoneMap
-          zones={dataset?.zones ?? []}
+          zones={dataset.data?.zones ?? []}
           scored={result?.scored ?? []}
           selectedH3={selectedZone}
           onSelect={handleSelect}

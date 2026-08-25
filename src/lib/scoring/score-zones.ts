@@ -6,7 +6,6 @@
  * isochrone union. No network, no React, no I/O.
  */
 
-import { UNREACHABLE_POLICY } from "./config";
 import { collectCommutes } from "./metrics/commute";
 import { applicableMetrics, METRICS } from "./registry";
 import { normalize, percentile } from "./stats";
@@ -70,7 +69,7 @@ function hardFilter(ctx: MetricContext): Rejection | null {
     const minutes = travel.minutes[personTargetId(person.id)] ?? null;
 
     if (minutes === null) {
-      if (UNREACHABLE_POLICY === "reject") {
+      if (household.unreachablePolicy === "reject") {
         reasons.push("unreachable");
         details.push(`No route found for ${person.name}`);
       }

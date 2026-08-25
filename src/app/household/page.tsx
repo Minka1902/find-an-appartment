@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { CardListSkeleton, Skeleton } from "@/components/layout/states";
 import { useHydrated } from "@/hooks/use-ranking";
 import { commuteWeight } from "@/lib/scoring/metrics/commute";
+import { buildShareUrl } from "@/lib/share-link";
 import { useHouseholdStore } from "@/store/household";
 
 /**
@@ -50,7 +51,15 @@ export default function HouseholdPage() {
 
   // Safe to read `window` here: the guard above returns during SSR, so this
   // line only ever runs on the client.
-  const inviteUrl = `${window.location.origin}/setup?household=${household.id}`;
+  //
+  // The link carries the household itself rather than an id. There is no
+  // backend to look an id up in, so the previous link opened setup on your own
+  // device and did nothing else — which the screen had to admit on itself.
+  const inviteUrl = buildShareUrl(
+    window.location.origin,
+    "/setup",
+    household,
+  );
 
   const totalPull = household.people.reduce(
     (sum, person) => sum + commuteWeight(person),
@@ -58,6 +67,8 @@ export default function HouseholdPage() {
   );
 
   const share = async () => {
+    if (!inviteUrl) return;
+
     // Use the native share sheet where it exists — on a phone that's the
     // expected way to hand a link to someone.
     if (navigator.share) {
@@ -173,17 +184,19 @@ export default function HouseholdPage() {
               </div>
 
               <p className="text-xs text-ink-muted">
-                Send this link and they add their own workplace and limits.
+                Send this link and they get your whole household — everyone&apos;s
+                addresses, limits and weights — to edit on their own device.
               </p>
 
               <div className="mt-3 truncate rounded-lg bg-surface-sunken px-3 py-2 font-mono text-[11px] text-ink-muted">
-                {inviteUrl || "…"}
+                {inviteUrl ?? "Household too large to fit in a link"}
               </div>
 
               <button
                 type="button"
                 onClick={share}
-                className="touch-target mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
+                disabled={inviteUrl === null}
+                className="touch-target mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
               >
                 {copied ? (
                   <>
@@ -210,9 +223,10 @@ export default function HouseholdPage() {
               ) : null}
 
               <p className="mt-3 border-t border-border-subtle pt-3 text-[11px] leading-relaxed text-ink-faint">
-                Sharing isn&apos;t wired to a backend yet — the household lives
-                in this browser, so the link currently only opens setup on your
-                own device.
+                The link carries the household inside it — there&apos;s no
+                account and no server copy. Whoever opens it is asked before
+                anything on their device is replaced, and edits they make stay
+                on their device until they send a link back.
               </p>
             </div>
           </section>

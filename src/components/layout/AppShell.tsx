@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Home, ListChecks, Map, Users } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { HouseholdImportPrompt } from "./HouseholdImportPrompt";
 
 /**
  * The single place the compact/wide layout regime is decided.
@@ -68,7 +69,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* `min-h-0` lets a full-height child (the map) shrink instead of
           overflowing the flex container. */}
-      <main className="min-h-0 min-w-0 flex-1">{children}</main>
+      <main id="main" className="min-h-0 min-w-0 flex-1">
+        {children}
+      </main>
+
+      {/* Lives in the shell so a shared link works whichever screen it points
+          at, not just the one the invite happens to use today. */}
+      <HouseholdImportPrompt />
 
       {/* Compact: bottom tab bar, padded for the home indicator. */}
       <nav

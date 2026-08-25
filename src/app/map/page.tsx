@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { BottomSheet } from "@/components/layout/BottomSheet";
@@ -71,6 +72,23 @@ export default function MapPage() {
 
   const [snapIndex, setSnapIndex] = useState(HALF);
   const [sheetHeight, setSheetHeight] = useState(0);
+  const [query, setQuery] = useState("");
+
+  /**
+   * The ranked list, narrowed to a town.
+   *
+   * A filter over the list rather than over the choropleth: the map keeps
+   * showing every area, because the point of narrowing to "Givatayim" is to see
+   * how it compares with its neighbours, not to hide them.
+   */
+  const visibleZones = useMemo(() => {
+    const scored = result?.scored ?? [];
+    const needle = query.trim().toLowerCase();
+    if (!needle) return scored;
+    return scored.filter((zone) =>
+      zone.zone.municipality.toLowerCase().includes(needle),
+    );
+  }, [result, query]);
 
   const selected = useMemo(
     () => result?.scored.find((zone) => zone.zone.h3 === selectedZone) ?? null,
@@ -146,13 +164,42 @@ export default function MapPage() {
         droppedMetrics={result?.droppedMetrics}
       />
       <div>
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-muted uppercase">
-          Best areas
-        </h3>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h3 className="text-xs font-semibold tracking-wide text-ink-muted uppercase">
+            Best areas
+          </h3>
+          {query ? (
+            <span className="text-[11px] text-ink-faint">
+              {visibleZones.length.toLocaleString()} in &ldquo;{query}&rdquo;
+            </span>
+          ) : null}
+        </div>
+
+        <div className="relative mb-2">
+          <Search
+            size={14}
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
+          />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter by town"
+            aria-label="Filter areas by town"
+            className="w-full rounded-lg border border-border-subtle bg-surface py-1.5 pr-2 pl-8 text-sm focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none"
+          />
+        </div>
+
         <RankedList
-          zones={result?.scored ?? []}
+          zones={visibleZones}
           selectedH3={selectedZone}
           onSelect={handleSelect}
+          emptyMessage={
+            query
+              ? `No matching areas in “${query}”.`
+              : "No areas passed your limits. Try raising a commute cap or your budget."
+          }
         />
       </div>
     </div>

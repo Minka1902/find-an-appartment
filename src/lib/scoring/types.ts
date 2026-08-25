@@ -192,10 +192,29 @@ export type RejectionReason =
   | "no-parking"
   | "unreachable";
 
+/** One person's commute past their own limit, for this zone. */
+export interface CommuteOverrun {
+  personId: string;
+  name: string;
+  minutes: number;
+  limit: number;
+}
+
 export interface Rejection {
   h3: string;
   reasons: RejectionReason[];
+  /** Human-readable summary, for display. */
   detail: string;
+  /**
+   * The same facts in structured form.
+   *
+   * `detail` is a joined sentence built for a person to read; deriving "raise
+   * this cap to 55 and 340 more areas qualify" from it would mean parsing
+   * English back out of a display string. These carry the numbers directly.
+   */
+  commuteOverruns: CommuteOverrun[];
+  /** Price level here, when it exceeded the household's cap. */
+  costOverrun: number | null;
 }
 
 export interface DroppedMetric {

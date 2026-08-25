@@ -5,7 +5,11 @@ import { RotateCcw } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { METRICS } from "@/lib/scoring/registry";
-import type { CommuteAggregation, Household } from "@/lib/scoring/types";
+import type {
+  CommuteAggregation,
+  DroppedMetric,
+  Household,
+} from "@/lib/scoring/types";
 import { useHouseholdStore } from "@/store/household";
 
 /**
@@ -31,7 +35,21 @@ const AGGREGATIONS: {
   { value: "max", label: "Protect worst", hint: "Optimize the worst commute" },
 ];
 
-export function WeightSliders({ household }: { household: Household }) {
+export function WeightSliders({
+  household,
+  droppedMetrics = [],
+}: {
+  household: Household;
+  /**
+   * Metrics the engine excluded from this run.
+   *
+   * Matters for `incomplete-coverage`: the metric applies to the household and
+   * its slider reads 60%, but it was dropped because some surviving zone had
+   * no value for it. Without saying so, the slider claims an influence the
+   * score does not have.
+   */
+  droppedMetrics?: DroppedMetric[];
+}) {
   const setWeight = useHouseholdStore((state) => state.setWeight);
   const resetWeights = useHouseholdStore((state) => state.resetWeights);
   const setAggregation = useHouseholdStore((state) => state.setAggregation);
@@ -60,6 +78,11 @@ export function WeightSliders({ household }: { household: Household }) {
           {METRICS.map((metric) => {
             const available = metric.isAvailable?.(household) ?? true;
             const value = household.weights[metric.key] ?? metric.defaultWeight;
+            const uncounted = droppedMetrics.some(
+              (dropped) =>
+                dropped.key === metric.key &&
+                dropped.reason === "incomplete-coverage",
+            );
 
             return (
               <div key={metric.key} className={cn(!available && "opacity-45")}>
@@ -99,6 +122,11 @@ export function WeightSliders({ household }: { household: Household }) {
                     {metric.key === "parking"
                       ? "No car — parking is excluded and its weight redistributed."
                       : "Not available for this household."}
+                  </p>
+                ) : uncounted ? (
+                  <p className="mt-0.5 text-[11px] text-caution">
+                    Not counted — some matching areas have no data for this, so
+                    its weight went to the other metrics.
                   </p>
                 ) : null}
               </div>

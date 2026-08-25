@@ -13,6 +13,7 @@ import { WINSOR_HIGH, WINSOR_LOW } from "./config";
 import { anchorTargetId, personTargetId } from "./targets";
 import type {
   AnchorTime,
+  CommuteOverrun,
   DroppedMetric,
   Household,
   MetricContext,
@@ -63,6 +64,8 @@ function hardFilter(ctx: MetricContext): Rejection | null {
   const { zone, metrics, travel, household } = ctx;
   const reasons: RejectionReason[] = [];
   const details: string[] = [];
+  const commuteOverruns: CommuteOverrun[] = [];
+  let costOverrun: number | null = null;
 
   for (const person of household.people) {
     if (!person.work) continue;
@@ -81,6 +84,12 @@ function hardFilter(ctx: MetricContext): Rejection | null {
       details.push(
         `${person.name}: ${Math.round(minutes)} min > ${person.maxCommuteMinutes} min limit`,
       );
+      commuteOverruns.push({
+        personId: person.id,
+        name: person.name,
+        minutes,
+        limit: person.maxCommuteMinutes,
+      });
     }
   }
 
@@ -91,6 +100,7 @@ function hardFilter(ctx: MetricContext): Rejection | null {
       details.push(
         `Price level ₪${Math.round(cost).toLocaleString("en-US")}/m² over budget`,
       );
+      costOverrun = cost;
     }
   }
 
@@ -109,6 +119,8 @@ function hardFilter(ctx: MetricContext): Rejection | null {
     // Dedupe: several people can trip the same reason.
     reasons: [...new Set(reasons)],
     detail: details.join("; "),
+    commuteOverruns,
+    costOverrun,
   };
 }
 

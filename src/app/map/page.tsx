@@ -6,9 +6,11 @@ import { useCallback, useMemo, useState } from "react";
 import { BottomSheet } from "@/components/layout/BottomSheet";
 import { ResponsiveDetailPanel } from "@/components/layout/ResponsiveDetailPanel";
 import { ErrorState, RankingSkeleton } from "@/components/layout/states";
+import { ExclusionSummary } from "@/components/map/ExclusionSummary";
 import { MapLegend } from "@/components/map/MapLegend";
 import { RankedList } from "@/components/map/RankedList";
 import { WeightSliders } from "@/components/weights/WeightSliders";
+import { ExcludedZoneDetail } from "@/components/zone/ExcludedZoneDetail";
 import { ZoneDetail } from "@/components/zone/ZoneDetail";
 import { useIsWide, useMediaQuery } from "@/hooks/use-media-query";
 import {
@@ -44,7 +46,7 @@ export default function MapPage() {
 
   const dataset = useZoneDataset();
   const metro = useMetro();
-  const { result, isLoading, error, retry } = useRanking();
+  const { result, isLoading, error, retry, rejectionsByH3 } = useRanking();
 
   /**
    * People and anchors whose location falls outside the ranked metro.
@@ -72,6 +74,30 @@ export default function MapPage() {
   const selected = useMemo(
     () => result?.scored.find((zone) => zone.zone.h3 === selectedZone) ?? null,
     [result, selectedZone],
+  );
+
+  /**
+   * A selected cell that was filtered out rather than ranked.
+   *
+   * Excluded cells sit in the same fill layer and have always been clickable,
+   * but they carry no score, so selecting one used to open an empty panel —
+   * the least useful possible answer to "why not this one?".
+   */
+  const selectedRejection = useMemo(
+    () =>
+      selected === null && selectedZone
+        ? (rejectionsByH3.get(selectedZone) ?? null)
+        : null,
+    [selected, selectedZone, rejectionsByH3],
+  );
+
+  const selectedZoneGeometry = useMemo(
+    () =>
+      selectedRejection
+        ? (dataset.data?.zones.find((zone) => zone.h3 === selectedRejection.h3) ??
+          null)
+        : null,
+    [selectedRejection, dataset.data],
   );
 
   // Opening the detail panel on a phone gets the weights sheet out of the way,
@@ -110,7 +136,14 @@ export default function MapPage() {
     <RankingSkeleton />
   ) : (
     <div className="space-y-6 pb-4">
-      <WeightSliders household={household} />
+      {result ? (
+        <ExclusionSummary result={result} household={household} />
+      ) : null}
+
+      <WeightSliders
+        household={household}
+        droppedMetrics={result?.droppedMetrics}
+      />
       <div>
         <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-muted uppercase">
           Best areas
@@ -218,12 +251,31 @@ export default function MapPage() {
       </div>
 
       <ResponsiveDetailPanel
-        open={selected !== null}
+        open={selected !== null || selectedRejection !== null}
         onClose={() => selectZone(null)}
-        title={selected ? `#${selected.rank} · ${selected.zone.municipality}` : ""}
-        subtitle={selected ? `Cell ${selected.zone.h3}` : undefined}
+        title={
+          selected
+            ? `#${selected.rank} · ${selected.zone.municipality}`
+            : selectedRejection
+              ? (selectedZoneGeometry?.municipality ?? "Excluded area")
+              : ""
+        }
+        subtitle={
+          selected
+            ? `Cell ${selected.zone.h3}`
+            : selectedRejection
+              ? "Excluded — not ranked"
+              : undefined
+        }
       >
-        {selected ? <ZoneDetail zone={selected} /> : null}
+        {selected ? (
+          <ZoneDetail zone={selected} />
+        ) : selectedRejection ? (
+          <ExcludedZoneDetail
+            zone={selectedZoneGeometry}
+            rejection={selectedRejection}
+          />
+        ) : null}
       </ResponsiveDetailPanel>
     </div>
   );

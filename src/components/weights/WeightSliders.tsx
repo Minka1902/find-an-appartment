@@ -35,6 +35,9 @@ export function WeightSliders({ household }: { household: Household }) {
   const setWeight = useHouseholdStore((state) => state.setWeight);
   const resetWeights = useHouseholdStore((state) => state.resetWeights);
   const setAggregation = useHouseholdStore((state) => state.setAggregation);
+  const setUnreachablePolicy = useHouseholdStore(
+    (state) => state.setUnreachablePolicy,
+  );
 
   return (
     <div className="space-y-5">
@@ -144,6 +147,40 @@ export function WeightSliders({ household }: { household: Household }) {
             )?.hint
           }
         </p>
+      </section>
+
+      {/*
+        Spec open decision #1, handed to the user instead of resolved by fiat.
+        A cell can be unroutable by transit and an ordinary drive away, so
+        whether that should delete it or merely cost it points depends on the
+        household — and it is the difference between an empty board and a full
+        one for anyone working near the metro edge.
+      */}
+      <section>
+        <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-muted uppercase">
+          Areas with no route
+        </h3>
+
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={household.unreachablePolicy === "penalty"}
+            onChange={(event) =>
+              setUnreachablePolicy(event.target.checked ? "penalty" : "reject")
+            }
+            className="touch-target mt-0.5 h-4 w-4 shrink-0 accent-accent"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">
+              Keep them, scored badly
+            </span>
+            <span className="block text-[11px] leading-relaxed text-ink-faint">
+              {household.unreachablePolicy === "penalty"
+                ? "Areas nobody can route to stay on the map with a heavy commute penalty."
+                : "Areas nobody can route to are excluded entirely."}
+            </span>
+          </span>
+        </label>
       </section>
     </div>
   );

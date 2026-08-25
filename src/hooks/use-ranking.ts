@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { useAsync } from "@/hooks/use-async";
-import { provider } from "@/lib/data/provider";
+import { provider, type Metro } from "@/lib/data/provider";
 import type { ZoneDataset } from "@/lib/fixtures/zones";
 import { scoreZones } from "@/lib/scoring/score-zones";
 import { householdTargets } from "@/lib/scoring/targets";
@@ -29,6 +29,17 @@ function travelKey(household: Household): string {
       target.location.lng,
     ]),
   );
+}
+
+/**
+ * The metro's identity and bounds.
+ *
+ * Screens that need the map's extent go through this rather than importing the
+ * Gush Dan fixture, so the data seam actually holds when a second metro exists.
+ */
+export function useMetro() {
+  const run = useCallback(() => provider.getMetro(), []);
+  return useAsync<Metro>(run, "metro");
 }
 
 /** Tier A: the metro's cell grid and static metrics. Loaded once. */

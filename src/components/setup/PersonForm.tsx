@@ -2,7 +2,7 @@
 
 import { Trash2 } from "lucide-react";
 
-import { AddressAutocomplete } from "@/components/setup/AddressAutocomplete";
+import { LocationPicker } from "@/components/setup/LocationPicker";
 import { NumberField, ModePicker } from "@/components/setup/fields";
 import type { Person, TravelMode } from "@/lib/scoring/types";
 import { useHouseholdStore } from "@/store/household";
@@ -43,9 +43,10 @@ export function PersonForm({
       </div>
 
       <div className="space-y-3">
-        <AddressAutocomplete
+        <LocationPicker
           label="Workplace"
           value={person.workLabel}
+          location={person.work}
           onSelect={({ label, location }) =>
             updatePerson(person.id, { workLabel: label, work: location })
           }

@@ -6,8 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { GUSH_DAN_BBOX, GUSH_DAN_CENTER } from "@/lib/fixtures/geography";
+import type { Metro } from "@/lib/data/provider";
 import type { ScoredZone, Zone } from "@/lib/scoring/types";
+import { basemapStyle } from "./basemap";
+import "./worker-url";
 import { fillColorExpression } from "./score-color";
 
 /**
@@ -23,56 +25,12 @@ import { fillColorExpression } from "./score-color";
  *    window ever changing size.
  */
 
-/**
- * Point MapLibre at a worker served from `public/` rather than the one its own
- * `new Worker(new URL(…))` call resolves to.
- *
- * Next's bundler leaves that URL alone, so the worker fetches the current page
- * and tries to parse HTML as JavaScript. Nothing throws — raster tiles keep
- * working — but every GeoJSON source stays unloaded forever, which reads as
- * "the choropleth just doesn't render".
- *
- * `scripts/copy-maplibre-worker.mjs` puts the files there on prebuild/predev.
- */
-maplibregl.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+
 
 const SOURCE_ID = "zones";
 const FILL_LAYER = "zones-fill";
 const OUTLINE_LAYER = "zones-outline";
 const SELECTED_LAYER = "zones-selected";
-
-const CARTO_ATTRIBUTION =
-  '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a> contributors, <a href="https://carto.com/attributions">© CARTO</a>';
-
-function basemapStyle(isDark: boolean): maplibregl.StyleSpecification {
-  const variant = isDark ? "dark_all" : "light_all";
-
-  return {
-    version: 8,
-    sources: {
-      basemap: {
-        type: "raster",
-        tiles: [
-          `https://a.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}.png`,
-          `https://b.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}.png`,
-          `https://c.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}.png`,
-        ],
-        tileSize: 256,
-        attribution: CARTO_ATTRIBUTION,
-      },
-    },
-    layers: [
-      // A background under the tiles, so the map still reads as a map if the
-      // tile host is unreachable.
-      {
-        id: "background",
-        type: "background",
-        paint: { "background-color": isDark ? "#0d0f12" : "#eef0f3" },
-      },
-      { id: "basemap", type: "raster", source: "basemap" },
-    ],
-  };
-}
 
 function toFeatureCollection(zones: Zone[]): GeoJSON.FeatureCollection {
   return {
@@ -87,6 +45,15 @@ function toFeatureCollection(zones: Zone[]): GeoJSON.FeatureCollection {
 }
 
 export interface ZoneMapProps {
+  /**
+   * The metro this map covers — its centre and bounds.
+   *
+   * Passed in rather than imported from the Gush Dan fixture: `getMetro()` has
+   * always existed on the provider and was called from nowhere, so the one
+   * screen that needed metro bounds reached around the data seam to a
+   * hardcoded constant. That is precisely what the seam exists to prevent.
+   */
+  metro: Metro;
   zones: Zone[];
   scored: ScoredZone[];
   selectedH3: string | null;
@@ -97,6 +64,7 @@ export interface ZoneMapProps {
 }
 
 export function ZoneMap({
+  metro,
   zones,
   scored,
   selectedH3,
@@ -143,7 +111,7 @@ export function ZoneMap({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: basemapStyle(isDark),
-      center: [GUSH_DAN_CENTER.lng, GUSH_DAN_CENTER.lat],
+      center: [metro.center.lng, metro.center.lat],
       zoom: 11,
       attributionControl: { compact: true },
     });
@@ -171,8 +139,14 @@ export function ZoneMap({
      * source and renders fine over the flat background. So this notes the
      * degradation for the UI to disclose rather than tearing anything down.
      */
+    let reported = false;
     const onError = (event: { error?: { message?: string } }) => {
-      console.error("MapLibre:", event.error?.message ?? event);
+      // One line, not one per tile: a blocked host fails every tile in the
+      // viewport, and 30-odd identical lines bury anything else in the console.
+      if (!reported) {
+        reported = true;
+        console.error("MapLibre:", event.error?.message ?? event);
+      }
       setBasemapFailed(true);
     };
     map.on("error", onError);
@@ -230,8 +204,8 @@ export function ZoneMap({
     // Fit to the metro the first time real geometry arrives.
     map.fitBounds(
       [
-        [GUSH_DAN_BBOX.minLng, GUSH_DAN_BBOX.minLat],
-        [GUSH_DAN_BBOX.maxLng, GUSH_DAN_BBOX.maxLat],
+        [metro.bbox.minLng, metro.bbox.minLat],
+        [metro.bbox.maxLng, metro.bbox.maxLat],
       ],
       { padding, duration: 0 },
     );

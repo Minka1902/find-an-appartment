@@ -12,8 +12,10 @@ import {
 import { useAsync } from "@/hooks/use-async";
 import { provider } from "@/lib/data/provider";
 import type { Listing } from "@/lib/fixtures/listings";
+import { CompareZones } from "@/components/zone/CompareZones";
 import { useHydrated, useRanking } from "@/hooks/use-ranking";
 import { cn } from "@/lib/cn";
+import { useHouseholdStore } from "@/store/household";
 
 /**
  * Stage 2 — the shortlist.
@@ -32,10 +34,29 @@ const TOP_CELLS = 8;
 export default function ShortlistPage() {
   const hydrated = useHydrated();
   const { result, isLoading, error, retry } = useRanking();
+  const pinned = useHouseholdStore((state) => state.pinned);
+  const clearPins = useHouseholdStore((state) => state.clearPins);
+
+  /**
+   * The areas actually being shortlisted.
+   *
+   * Pinned ones when the household has chosen any, the top few otherwise. A
+   * screen called "Shortlist" that ignored what you shortlisted was the odd
+   * part; falling back keeps it useful before anyone has pinned anything.
+   */
+  const pinnedZones = useMemo(
+    () =>
+      pinned
+        .map((h3) => result?.scored.find((zone) => zone.zone.h3 === h3))
+        .filter((zone): zone is NonNullable<typeof zone> => zone !== undefined),
+    [pinned, result],
+  );
+
+  const usingPins = pinnedZones.length > 0;
 
   const topZones = useMemo(
-    () => result?.scored.slice(0, TOP_CELLS) ?? [],
-    [result],
+    () => (usingPins ? pinnedZones : (result?.scored.slice(0, TOP_CELLS) ?? [])),
+    [usingPins, pinnedZones, result],
   );
 
   // Keyed on the cell set rather than the array identity, so a re-rank that
@@ -95,11 +116,39 @@ export default function ShortlistPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-6xl px-4 py-5 lg:px-8 lg:py-8">
-        <h1 className="text-xl font-semibold lg:text-2xl">Shortlist</h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Addresses in your {topZones.length} best-scoring areas, with exact
-          door-to-door commutes.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold lg:text-2xl">Shortlist</h1>
+            <p className="mt-1 text-sm text-ink-muted">
+              {usingPins
+                ? `The ${topZones.length} area${topZones.length === 1 ? "" : "s"} you shortlisted, with exact door-to-door commutes.`
+                : `Your ${topZones.length} best-scoring areas. Star areas on the map to choose your own.`}
+            </p>
+          </div>
+
+          {usingPins ? (
+            <button
+              type="button"
+              onClick={clearPins}
+              className="touch-target shrink-0 rounded-lg border border-border-subtle px-3 py-2 text-xs font-medium hover:bg-surface-sunken"
+            >
+              Clear shortlist
+            </button>
+          ) : null}
+        </div>
+
+        {/* The comparison comes before the listings: the areas are the
+            decision, and the addresses are only examples of what is in them. */}
+        {topZones.length > 1 ? (
+          <section className="mt-6">
+            <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-muted uppercase">
+              Side by side
+            </h2>
+            <div className="rounded-xl border border-border-subtle">
+              <CompareZones zones={topZones} />
+            </div>
+          </section>
+        ) : null}
 
         <IllustrativeNotice />
 

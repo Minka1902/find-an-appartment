@@ -31,6 +31,7 @@ const SOURCE_ID = "zones";
 const FILL_LAYER = "zones-fill";
 const OUTLINE_LAYER = "zones-outline";
 const SELECTED_LAYER = "zones-selected";
+const PINNED_LAYER = "zones-pinned";
 
 function toFeatureCollection(zones: Zone[]): GeoJSON.FeatureCollection {
   return {
@@ -57,6 +58,8 @@ export interface ZoneMapProps {
   zones: Zone[];
   scored: ScoredZone[];
   selectedH3: string | null;
+  /** Shortlisted cells, outlined so they stay findable while panning. */
+  pinnedH3: string[];
   onSelect(h3: string | null): void;
   isDark: boolean;
   /** Space reserved by overlaying chrome, so `fitBounds` doesn't hide cells. */
@@ -68,6 +71,7 @@ export function ZoneMap({
   zones,
   scored,
   selectedH3,
+  pinnedH3,
   onSelect,
   isDark,
   padding,
@@ -189,6 +193,7 @@ export function ZoneMap({
       addZoneLayers(map, zones, isDark);
       applyScores(map, scoreByH3);
       applySelection(map, selectedH3);
+      applyPinned(map, pinnedH3);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDark]);
@@ -256,6 +261,12 @@ export function ZoneMap({
     if (!map) return;
     applySelection(map, selectedH3);
   }, [selectedH3]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    applyPinned(map, pinnedH3);
+  }, [pinnedH3]);
 
   // --- Keep overlaying chrome out of the way -------------------------------
   useEffect(() => {
@@ -340,6 +351,23 @@ function addZoneLayers(map: MapLibreMap, zones: Zone[], isDark: boolean) {
     });
   }
 
+  // Shortlisted cells, drawn under the selection outline so selecting a pinned
+  // cell still reads as "selected" rather than blending into the pin colour.
+  if (!map.getLayer(PINNED_LAYER)) {
+    map.addLayer({
+      id: PINNED_LAYER,
+      type: "line",
+      source: SOURCE_ID,
+      paint: {
+        "line-color": "#2563eb",
+        "line-width": 2,
+      },
+      filter: ["in", ["get", "h3"], ["literal", []]],
+    });
+  } else {
+    map.setPaintProperty(PINNED_LAYER, "line-color", "#2563eb");
+  }
+
   // Drawn above the fill so the selected cell reads clearly at any zoom.
   if (!map.getLayer(SELECTED_LAYER)) {
     map.addLayer({
@@ -373,4 +401,16 @@ function applyScores(map: MapLibreMap, scores: Map<string, number>) {
 function applySelection(map: MapLibreMap, selectedH3: string | null) {
   if (!map.getLayer(SELECTED_LAYER)) return;
   map.setFilter(SELECTED_LAYER, ["==", ["get", "h3"], selectedH3 ?? ""]);
+}
+
+/**
+ * Outline the shortlisted cells.
+ *
+ * A filter rather than feature-state: pins are few and change rarely, and a
+ * filter keeps the pin outline independent of the score state that the hot
+ * re-rank path clears wholesale.
+ */
+function applyPinned(map: MapLibreMap, pinned: string[]) {
+  if (!map.getLayer(PINNED_LAYER)) return;
+  map.setFilter(PINNED_LAYER, ["in", ["get", "h3"], ["literal", pinned]]);
 }

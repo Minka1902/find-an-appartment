@@ -43,6 +43,7 @@ export default function MapPage() {
   const household = useHouseholdStore((state) => state.household);
   const selectedZone = useHouseholdStore((state) => state.selectedZone);
   const selectZone = useHouseholdStore((state) => state.selectZone);
+  const pinned = useHouseholdStore((state) => state.pinned);
 
   const dataset = useZoneDataset();
   const metro = useMetro();
@@ -206,6 +207,7 @@ export default function MapPage() {
             zones={dataset.data?.zones ?? []}
             scored={result?.scored ?? []}
             selectedH3={selectedZone}
+            pinnedH3={pinned}
             onSelect={handleSelect}
             isDark={isDark}
             padding={padding}

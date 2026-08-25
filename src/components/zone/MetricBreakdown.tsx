@@ -46,12 +46,18 @@ export function MetricBreakdown({
               </span>
             </div>
 
-            {/* Position within the surviving range, not an absolute rating. */}
+            {/* Position within the surviving range, not an absolute rating.
+                `progressbar` rather than `img`: it is a value on a scale, and
+                the role carries that scale to assistive tech instead of
+                flattening it into one alt string. */}
             <div className="mt-1 flex items-center gap-2">
               <div
                 className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-sunken"
-                role="img"
-                aria-label={`${row.label}: ${Math.round(row.normalized * 100)} out of 100 relative to other areas`}
+                role="progressbar"
+                aria-valuenow={Math.round(row.normalized * 100)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`${row.label}, relative to other matching areas`}
               >
                 <div
                   className="h-full rounded-full bg-accent"

@@ -57,6 +57,32 @@ export function WeightSliders({
     (state) => state.setUnreachablePolicy,
   );
 
+  /** Arrow keys move the selection, wrapping at both ends, as radios do. */
+  const onAggregationKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (step === 0) return;
+
+    event.preventDefault();
+    const current = AGGREGATIONS.findIndex(
+      (option) => option.value === household.commuteAggregation,
+    );
+    const next =
+      AGGREGATIONS[
+        (current + step + AGGREGATIONS.length) % AGGREGATIONS.length
+      ];
+
+    setAggregation(next.value);
+    // Selection follows focus in a radio group, so focus has to follow too.
+    event.currentTarget
+      .querySelector<HTMLButtonElement>(`[data-aggregation="${next.value}"]`)
+      ?.focus();
+  };
+
   return (
     <div className="space-y-5">
       <section>
@@ -140,9 +166,17 @@ export function WeightSliders({
           Whose commute wins
         </h3>
 
+        {/*
+          A radio group behaves as one tab stop with arrow keys moving between
+          options. Before this all three were separately tabbable and the arrow
+          keys did nothing, so it announced itself as a radio group and then
+          didn't act like one — which is worse than plain buttons, because the
+          role sets an expectation the widget breaks.
+        */}
         <div
           role="radiogroup"
           aria-label="Commute aggregation"
+          onKeyDown={onAggregationKeyDown}
           className="flex gap-1 rounded-lg bg-surface-sunken p-1"
         >
           {AGGREGATIONS.map((option) => {
@@ -153,6 +187,9 @@ export function WeightSliders({
                 type="button"
                 role="radio"
                 aria-checked={active}
+                // Roving tabindex: only the checked option is in the tab order.
+                tabIndex={active ? 0 : -1}
+                data-aggregation={option.value}
                 title={option.hint}
                 onClick={() => setAggregation(option.value)}
                 className={cn(

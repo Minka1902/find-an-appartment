@@ -149,6 +149,7 @@ export function BottomSheet({
       >
         <div
           role="slider"
+      aria-orientation="vertical"
           tabIndex={0}
           aria-label="Panel height"
           aria-valuemin={1}

@@ -32,6 +32,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-[100dvh] w-full flex-col lg:flex-row">
+      {/* Visible only on focus. Without it, reaching the map means tabbing
+          through the whole nav on every navigation. */}
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:rounded-lg focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
+      >
+        Skip to content
+      </a>
+
       {/* Wide: persistent left rail. Hidden entirely on compact. */}
       <nav
         aria-label="Main"
@@ -79,7 +88,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Compact: bottom tab bar, padded for the home indicator. */}
       <nav
-        aria-label="Main"
+        // Named distinctly from the rail above. Only one of the two is ever
+        // exposed — `display: none` takes the other out of the accessibility
+        // tree — so this is insurance rather than a fix: if either is ever
+        // hidden by something that doesn't remove it from the tree, two
+        // landmarks called "Main" become indistinguishable in a landmark list.
+        aria-label="Main, bottom bar"
         className={cn(
           "flex shrink-0 border-t border-border-subtle",
           "bg-surface-raised pb-[env(safe-area-inset-bottom)] lg:hidden",

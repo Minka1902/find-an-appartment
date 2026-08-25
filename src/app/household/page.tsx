@@ -142,8 +142,11 @@ export default function HouseholdPage() {
 
                     <div
                       className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-sunken"
-                      role="img"
-                      aria-label={`${person.name || "Unnamed"}: ${Math.round(share * 100)} percent of commute weight`}
+                      role="progressbar"
+                      aria-valuenow={Math.round(share * 100)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`${person.name || "Unnamed"}, share of commute weight`}
                     >
                       <div
                         className="h-full rounded-full bg-accent"

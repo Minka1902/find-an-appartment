@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import type { TravelMode } from "@/lib/scoring/types";
@@ -28,6 +28,18 @@ export function NumberField({
 }) {
   const id = useId();
 
+  /**
+   * What the user is currently typing, or null when the field is settled.
+   *
+   * A plain controlled number input cannot be edited: clearing it to retype
+   * yields `""`, and `Number("")` is `0`, which is finite — so the old code
+   * committed the minimum the instant you deleted the last digit, and the
+   * field snapped back under your cursor. Holding the in-progress text locally
+   * lets the field be empty for a keystroke without the household seeing a
+   * value nobody chose.
+   */
+  const [draft, setDraft] = useState<string | null>(null);
+
   return (
     <div>
       <label
@@ -44,16 +56,26 @@ export function NumberField({
           // `inputMode` gets the numeric keypad on mobile without losing the
           // spinner on desktop.
           inputMode="numeric"
-          value={value}
+          value={draft ?? String(value)}
           min={min}
           max={max}
           step={step}
           onChange={(event) => {
-            const next = Number(event.target.value);
+            const raw = event.target.value;
+            setDraft(raw);
+
+            // A number input reports "" for anything it can't parse, including
+            // a half-typed "-" and a cleared field. Nothing to commit yet.
+            if (raw === "") return;
+
+            const next = Number(raw);
             if (Number.isFinite(next)) {
               onChange(Math.min(max, Math.max(min, next)));
             }
           }}
+          // Let go of the draft so the field shows the clamped, committed
+          // value — typing 90 into a field capped at 7 should end up reading 7.
+          onBlur={() => setDraft(null)}
           className={cn(
             "w-full rounded-lg border border-border-subtle bg-surface",
             "px-2.5 py-2 text-sm tabular-nums",
@@ -105,26 +127,40 @@ export function ModePicker({
         {label}
       </legend>
 
-      {/* Wraps rather than scrolls: four chips fit two-up at 360px. */}
+      {/*
+        Real checkboxes behind chip labels, not buttons wearing
+        `role="checkbox"`. The ARIA role told assistive tech it was a checkbox
+        while the element brought none of the behaviour — no Space to toggle,
+        no participation in the fieldset, nothing for a forms-mode reader to
+        find. A visually-hidden input inside its own `<label>` gets all of that
+        from the platform, and the chip is just how it looks.
+
+        Wraps rather than scrolls: four chips fit two-up at 360px.
+      */}
       <div className="flex flex-wrap gap-1.5">
         {MODES.map((mode) => {
           const active = value.includes(mode.value);
           return (
-            <button
+            <label
               key={mode.value}
-              type="button"
-              role="checkbox"
-              aria-checked={active}
-              onClick={() => toggle(mode.value)}
               className={cn(
-                "touch-target rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                "touch-target inline-flex cursor-pointer items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                // `focus-within` puts the ring on the chip, since the input
+                // itself is not visible.
+                "focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-1",
                 active
                   ? "border-accent bg-accent-soft text-accent"
                   : "border-border-subtle text-ink-muted hover:bg-surface-sunken",
               )}
             >
+              <input
+                type="checkbox"
+                checked={active}
+                onChange={() => toggle(mode.value)}
+                className="sr-only"
+              />
               {mode.label}
-            </button>
+            </label>
           );
         })}
       </div>

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `ci`, not `install`: the lockfile is the input, and a run that quietly
+      # resolved different versions would not be testing what ships.
+      - run: npm ci
+
+      - run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - run: npm test
+
+      # Also exercises the prebuild step that copies the MapLibre worker into
+      # public/ — without it the choropleth silently never renders, and nothing
+      # else in this pipeline would catch that.
+      - run: npm run build

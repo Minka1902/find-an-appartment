@@ -6,6 +6,7 @@
  * case, not an empty form.
  */
 
+import { DEFAULT_UNREACHABLE_POLICY } from "@/lib/scoring/config";
 import { defaultWeights } from "@/lib/scoring/registry";
 import type { Household } from "@/lib/scoring/types";
 
@@ -62,6 +63,7 @@ export function demoHousehold(): Household {
     maxCost: null,
     weights: defaultWeights(),
     commuteAggregation: "balanced",
+    unreachablePolicy: DEFAULT_UNREACHABLE_POLICY,
   };
 }
 
@@ -88,5 +90,6 @@ export function emptyHousehold(): Household {
     maxCost: null,
     weights: defaultWeights(),
     commuteAggregation: "balanced",
+    unreachablePolicy: DEFAULT_UNREACHABLE_POLICY,
   };
 }

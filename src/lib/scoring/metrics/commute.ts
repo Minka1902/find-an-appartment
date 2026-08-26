@@ -1,10 +1,16 @@
 import {
   BALANCED_MEAN_SHARE,
+  DEFAULT_UNREACHABLE_POLICY,
   UNREACHABLE_PENALTY_MINUTES,
-  UNREACHABLE_POLICY,
 } from "../config";
 import { personTargetId } from "../targets";
-import type { Household, MetricContext, MetricDefinition, ZoneTravel } from "../types";
+import type {
+  Household,
+  MetricContext,
+  MetricDefinition,
+  UnreachablePolicy,
+  ZoneTravel,
+} from "../types";
 
 /**
  * Effective commute weight for a person.
@@ -48,12 +54,13 @@ export function collectCommutes(
 export function aggregateCommute(
   samples: CommuteSample[],
   aggregation: Household["commuteAggregation"],
+  policy: UnreachablePolicy = DEFAULT_UNREACHABLE_POLICY,
 ): number | null {
   const resolved = samples.map((sample) => ({
     ...sample,
     minutes:
       sample.minutes ??
-      (UNREACHABLE_POLICY === "penalty" ? UNREACHABLE_PENALTY_MINUTES : null),
+      (policy === "penalty" ? UNREACHABLE_PENALTY_MINUTES : null),
   }));
 
   if (resolved.some((sample) => sample.minutes === null)) return null;
@@ -99,6 +106,7 @@ export const commuteMetric: MetricDefinition = {
     return aggregateCommute(
       collectCommutes(household, travel),
       household.commuteAggregation,
+      household.unreachablePolicy,
     );
   },
 

@@ -6,8 +6,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { GUSH_DAN_BBOX, GUSH_DAN_CENTER } from "@/lib/fixtures/geography";
+import { useIsCoarsePointer } from "@/hooks/use-media-query";
+import type { Metro } from "@/lib/data/provider";
 import type { ScoredZone, Zone } from "@/lib/scoring/types";
+import { basemapStyle } from "./basemap";
+import "./worker-url";
 import { fillColorExpression } from "./score-color";
 
 /**
@@ -23,56 +26,13 @@ import { fillColorExpression } from "./score-color";
  *    window ever changing size.
  */
 
-/**
- * Point MapLibre at a worker served from `public/` rather than the one its own
- * `new Worker(new URL(…))` call resolves to.
- *
- * Next's bundler leaves that URL alone, so the worker fetches the current page
- * and tries to parse HTML as JavaScript. Nothing throws — raster tiles keep
- * working — but every GeoJSON source stays unloaded forever, which reads as
- * "the choropleth just doesn't render".
- *
- * `scripts/copy-maplibre-worker.mjs` puts the files there on prebuild/predev.
- */
-maplibregl.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+
 
 const SOURCE_ID = "zones";
 const FILL_LAYER = "zones-fill";
 const OUTLINE_LAYER = "zones-outline";
 const SELECTED_LAYER = "zones-selected";
-
-const CARTO_ATTRIBUTION =
-  '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a> contributors, <a href="https://carto.com/attributions">© CARTO</a>';
-
-function basemapStyle(isDark: boolean): maplibregl.StyleSpecification {
-  const variant = isDark ? "dark_all" : "light_all";
-
-  return {
-    version: 8,
-    sources: {
-      basemap: {
-        type: "raster",
-        tiles: [
-          `https://a.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}.png`,
-          `https://b.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}.png`,
-          `https://c.basemaps.cartocdn.com/${variant}/{z}/{x}/{y}.png`,
-        ],
-        tileSize: 256,
-        attribution: CARTO_ATTRIBUTION,
-      },
-    },
-    layers: [
-      // A background under the tiles, so the map still reads as a map if the
-      // tile host is unreachable.
-      {
-        id: "background",
-        type: "background",
-        paint: { "background-color": isDark ? "#0d0f12" : "#eef0f3" },
-      },
-      { id: "basemap", type: "raster", source: "basemap" },
-    ],
-  };
-}
+const PINNED_LAYER = "zones-pinned";
 
 function toFeatureCollection(zones: Zone[]): GeoJSON.FeatureCollection {
   return {
@@ -87,9 +47,20 @@ function toFeatureCollection(zones: Zone[]): GeoJSON.FeatureCollection {
 }
 
 export interface ZoneMapProps {
+  /**
+   * The metro this map covers — its centre and bounds.
+   *
+   * Passed in rather than imported from the Gush Dan fixture: `getMetro()` has
+   * always existed on the provider and was called from nowhere, so the one
+   * screen that needed metro bounds reached around the data seam to a
+   * hardcoded constant. That is precisely what the seam exists to prevent.
+   */
+  metro: Metro;
   zones: Zone[];
   scored: ScoredZone[];
   selectedH3: string | null;
+  /** Shortlisted cells, outlined so they stay findable while panning. */
+  pinnedH3: string[];
   onSelect(h3: string | null): void;
   isDark: boolean;
   /** Space reserved by overlaying chrome, so `fitBounds` doesn't hide cells. */
@@ -97,9 +68,11 @@ export interface ZoneMapProps {
 }
 
 export function ZoneMap({
+  metro,
   zones,
   scored,
   selectedH3,
+  pinnedH3,
   onSelect,
   isDark,
   padding,
@@ -114,6 +87,19 @@ export function ZoneMap({
    * exactly once, whichever order they happen in.
    */
   const [mapReady, setMapReady] = useState(false);
+  /**
+   * Whether the basemap tiles failed. Purely a disclosure flag — the cells do
+   * not depend on the basemap, so this changes what we *say*, not what renders.
+   */
+  const [basemapFailed, setBasemapFailed] = useState(false);
+  const [hover, setHover] = useState<{
+    h3: string;
+    municipality: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  // No hover on touch, where there is no pointer to hover with.
+  const hoverEnabled = !useIsCoarsePointer();
   // Held in a ref so the click handler can be installed once without going
   // stale — reinstalling map listeners on every render is needless churn.
   const onSelectRef = useRef(onSelect);
@@ -131,6 +117,22 @@ export function ZoneMap({
     return map;
   }, [scored]);
 
+  // Keyed off the geometry, not the ranking, so re-scoring doesn't rebuild it.
+  const centroidByH3 = useMemo(() => {
+    const map = new Map<string, Zone["centroid"]>();
+    for (const zone of zones) map.set(zone.h3, zone.centroid);
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geometryKey]);
+
+  const rankByH3 = useMemo(() => {
+    const map = new Map<string, { rank: number; score: number }>();
+    for (const zone of scored) {
+      map.set(zone.zone.h3, { rank: zone.rank, score: zone.score });
+    }
+    return map;
+  }, [scored]);
+
   // --- Create the map once -------------------------------------------------
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -138,7 +140,7 @@ export function ZoneMap({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: basemapStyle(isDark),
-      center: [GUSH_DAN_CENTER.lng, GUSH_DAN_CENTER.lat],
+      center: [metro.center.lng, metro.center.lat],
       zoom: 11,
       attributionControl: { compact: true },
     });
@@ -156,8 +158,31 @@ export function ZoneMap({
     if (map.isStyleLoaded()) setMapReady(true);
     else map.once("style.load", () => setMapReady(true));
 
+    /**
+     * MapLibre reports failures through an `error` event and throws nothing.
+     * With no handler it installs a console-only default, so a blocked tile
+     * host or a failed worker fetch produced an entirely silent grey rectangle
+     * — indistinguishable from a map that simply hadn't loaded yet.
+     *
+     * A raster tile failure is not fatal: the choropleth is a separate GeoJSON
+     * source and renders fine over the flat background. So this notes the
+     * degradation for the UI to disclose rather than tearing anything down.
+     */
+    let reported = false;
+    const onError = (event: { error?: { message?: string } }) => {
+      // One line, not one per tile: a blocked host fails every tile in the
+      // viewport, and 30-odd identical lines bury anything else in the console.
+      if (!reported) {
+        reported = true;
+        console.error("MapLibre:", event.error?.message ?? event);
+      }
+      setBasemapFailed(true);
+    };
+    map.on("error", onError);
+
     return () => {
       setMapReady(false);
+      map.off("error", onError);
       map.remove();
       mapRef.current = null;
     };
@@ -193,6 +218,7 @@ export function ZoneMap({
       addZoneLayers(map, zones, isDark);
       applyScores(map, scoreByH3);
       applySelection(map, selectedH3);
+      applyPinned(map, pinnedH3);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDark]);
@@ -208,8 +234,8 @@ export function ZoneMap({
     // Fit to the metro the first time real geometry arrives.
     map.fitBounds(
       [
-        [GUSH_DAN_BBOX.minLng, GUSH_DAN_BBOX.minLat],
-        [GUSH_DAN_BBOX.maxLng, GUSH_DAN_BBOX.maxLat],
+        [metro.bbox.minLng, metro.bbox.minLat],
+        [metro.bbox.maxLng, metro.bbox.maxLat],
       ],
       { padding, duration: 0 },
     );
@@ -235,18 +261,45 @@ export function ZoneMap({
     };
     const clearPointer = () => {
       map.getCanvas().style.cursor = "";
+      setHover(null);
+    };
+
+    /**
+     * Read a cell without committing to it.
+     *
+     * Every cell used to be an opaque shade until you clicked it, which makes
+     * scanning the map a sequence of commitments. Pointer-only: on touch there
+     * is no hover, and the tap already opens the full panel.
+     */
+    const onMove = (event: maplibregl.MapMouseEvent) => {
+      const features = map.queryRenderedFeatures(event.point, {
+        layers: [FILL_LAYER],
+      });
+      const feature = features[0];
+      if (!feature) {
+        setHover(null);
+        return;
+      }
+      setHover({
+        h3: feature.properties?.h3 as string,
+        municipality: feature.properties?.municipality as string,
+        x: event.point.x,
+        y: event.point.y,
+      });
     };
 
     map.on("click", onClick);
     map.on("mouseenter", FILL_LAYER, setPointer);
     map.on("mouseleave", FILL_LAYER, clearPointer);
+    if (hoverEnabled) map.on("mousemove", FILL_LAYER, onMove);
 
     return () => {
       map.off("click", onClick);
       map.off("mouseenter", FILL_LAYER, setPointer);
       map.off("mouseleave", FILL_LAYER, clearPointer);
+      map.off("mousemove", FILL_LAYER, onMove);
     };
-  }, []);
+  }, [hoverEnabled]);
 
   // --- Tier C: recolour on every re-score ----------------------------------
   useEffect(() => {
@@ -259,14 +312,77 @@ export function ZoneMap({
     const map = mapRef.current;
     if (!map) return;
     applySelection(map, selectedH3);
-  }, [selectedH3]);
+
+    /*
+     * Bring an off-screen selection into view.
+     *
+     * Guarded on "not already visible" rather than always recentring, which
+     * distinguishes the two ways a cell gets selected without needing to track
+     * where the event came from: a cell you clicked is by definition on screen,
+     * so this does nothing, while one picked from the ranked list or a search
+     * result may be anywhere in the metro.
+     */
+    if (!selectedH3) return;
+    const centroid = centroidByH3.get(selectedH3);
+    if (!centroid) return;
+
+    if (!map.getBounds().contains([centroid.lng, centroid.lat])) {
+      map.easeTo({ center: [centroid.lng, centroid.lat], duration: 500 });
+    }
+  }, [selectedH3, centroidByH3]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    applyPinned(map, pinnedH3);
+  }, [pinnedH3]);
 
   // --- Keep overlaying chrome out of the way -------------------------------
   useEffect(() => {
     mapRef.current?.setPadding(padding);
   }, [padding]);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" />
+
+      {/* Follows the cursor, so it never covers the cell being read.
+          `aria-hidden`: the ranked list already carries all of this as text,
+          and a tooltip chasing a mouse is no use to a screen reader. */}
+      {hover ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-md border border-border-subtle bg-surface/95 px-2 py-1 text-[11px] whitespace-nowrap shadow-sm backdrop-blur"
+          style={{ left: hover.x, top: hover.y }}
+        >
+          <span className="font-medium">{hover.municipality}</span>
+          {(() => {
+            const ranked = rankByH3.get(hover.h3);
+            return ranked ? (
+              <span className="text-ink-faint">
+                {" "}
+                · #{ranked.rank} · {Math.round(ranked.score)}
+              </span>
+            ) : (
+              <span className="text-ink-faint"> · excluded</span>
+            );
+          })()}
+        </div>
+      ) : null}
+
+      {/* Disclosed rather than hidden: the cells below are still correct, and
+          a user who can see the scores but no streets deserves to know which
+          half is missing. */}
+      {basemapFailed ? (
+        <div
+          role="status"
+          className="pointer-events-none absolute right-3 bottom-8 left-3 z-10 mx-auto max-w-xs rounded-lg border border-caution/35 bg-surface/95 px-3 py-2 text-center text-[11px] leading-relaxed text-ink-muted shadow-sm backdrop-blur"
+        >
+          Street map unavailable — the ranked areas below are unaffected.
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +444,23 @@ function addZoneLayers(map: MapLibreMap, zones: Zone[], isDark: boolean) {
     });
   }
 
+  // Shortlisted cells, drawn under the selection outline so selecting a pinned
+  // cell still reads as "selected" rather than blending into the pin colour.
+  if (!map.getLayer(PINNED_LAYER)) {
+    map.addLayer({
+      id: PINNED_LAYER,
+      type: "line",
+      source: SOURCE_ID,
+      paint: {
+        "line-color": "#2563eb",
+        "line-width": 2,
+      },
+      filter: ["in", ["get", "h3"], ["literal", []]],
+    });
+  } else {
+    map.setPaintProperty(PINNED_LAYER, "line-color", "#2563eb");
+  }
+
   // Drawn above the fill so the selected cell reads clearly at any zoom.
   if (!map.getLayer(SELECTED_LAYER)) {
     map.addLayer({
@@ -361,4 +494,16 @@ function applyScores(map: MapLibreMap, scores: Map<string, number>) {
 function applySelection(map: MapLibreMap, selectedH3: string | null) {
   if (!map.getLayer(SELECTED_LAYER)) return;
   map.setFilter(SELECTED_LAYER, ["==", ["get", "h3"], selectedH3 ?? ""]);
+}
+
+/**
+ * Outline the shortlisted cells.
+ *
+ * A filter rather than feature-state: pins are few and change rarely, and a
+ * filter keeps the pin outline independent of the score state that the hot
+ * re-rank path clears wholesale.
+ */
+function applyPinned(map: MapLibreMap, pinned: string[]) {
+  if (!map.getLayer(PINNED_LAYER)) return;
+  map.setFilter(PINNED_LAYER, ["in", ["get", "h3"], ["literal", pinned]]);
 }

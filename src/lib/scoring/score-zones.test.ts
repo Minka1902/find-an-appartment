@@ -57,6 +57,9 @@ function makeHousehold(overrides: Partial<Household> = {}): Household {
     maxCost: null,
     weights: defaultWeights(),
     commuteAggregation: "balanced",
+    // The policy moved from a module constant onto the household; this default
+    // is the historical behaviour, so every assertion below still holds.
+    unreachablePolicy: "reject",
     ...overrides,
   };
 }

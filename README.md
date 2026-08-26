@@ -17,8 +17,12 @@ data**. The routing and database tiers are not built yet.
 | Scoring engine, metric registry, hard filters | OTP2 / Valhalla routing |
 | All five screens, fully responsive | Postgres + PostGIS, Drizzle schema |
 | H3 cell grid + choropleth map | GTFS / OSM / CBS / nadlan ingestion |
-| Fixture data for Gush Dan (~2,100 cells) | Auth, real invite links |
+| Fixture data for Gush Dan (~2,100 cells) | Accounts and a server-side household |
 | Client-side re-rank on every slider drag | Real listings (see below) |
+| Any location, by pin, coordinates or geocoder | |
+| Exclusion reasons with one-click fixes | |
+| Pin and compare areas side by side | |
+| Households shared by link | |
 
 Every number on screen is **generated, not measured**. The fixtures are plausible
 and spatially structured, but they are not real data and nothing should be
@@ -29,9 +33,14 @@ presented to a user as a measurement.
 ```bash
 npm install
 npm run dev      # http://localhost:3000
-npm test         # scoring engine + fixture tests
+npm test         # scoring engine, fixtures, share links, components
+npm run lint
 npm run build
 ```
+
+Optional: set `GEOCODER_URL` to a Nominatim-compatible base URL to turn on
+free-text address search. Without it, the address book, coordinate paste and
+pin-drop all still work — see below.
 
 The basemap uses CARTO raster tiles. If your network blocks them the cells still
 render over a flat background — the choropleth does not depend on the basemap.
@@ -62,6 +71,10 @@ touches no UI.
 | `src/lib/scoring/config.ts` | The tunables the ranking is validated against |
 | `src/lib/scoring/registry.ts` | Metric registry — add a metric with one file plus one entry |
 | `src/lib/data/provider.ts` | The data seam |
+| `src/lib/scoring/explain.ts` | Why areas were excluded, and what would bring them back |
+| `src/components/setup/LocationPicker.tsx` | Setting any location: book, coordinates, pin or geocoder |
+| `src/lib/share-link.ts` | Encoding a household into a URL |
+| `src/hooks/use-async.ts` | The cancellation/supersession/rejection guards for provider calls |
 | `src/components/layout/AppShell.tsx` | The one place the layout regime is decided |
 | `src/components/map/ZoneMap.tsx` | Choropleth, re-coloured via `feature-state` |
 
@@ -77,9 +90,13 @@ sliders both want the whole viewport:
 | Cell detail | Full-height sheet over the map, swipe to dismiss | 420px right panel, map stays interactive |
 | Shortlist | Cards, commutes as chips | Table with a column per person |
 | Household | Single column | Members beside the invite panel |
+| Compare | Columns scroll under a sticky label column | A column per shortlisted area |
 
 Verified at 360 / 390 / 768 / 1024 / 1440 with no horizontal overflow on any
 screen, in both light and dark mode.
+
+The one place horizontal scrolling is deliberate is the comparison table, where
+the alternative is truncating the numbers being compared.
 
 ## Things worth knowing before changing this
 
@@ -89,6 +106,30 @@ ends up fetching the page HTML and dies silently. Raster tiles keep working whil
 *every GeoJSON source stays permanently unloaded*, which looks like "the
 choropleth doesn't render". `scripts/copy-maplibre-worker.mjs` copies the real
 worker on `prebuild`/`predev` and `ZoneMap.tsx` calls `setWorkerUrl`.
+
+**Setting a location does not require a geocoder.** The spec (§5) banned
+free-text geocoding because Hebrew addresses transliterate a dozen ways and a
+guessed coordinate is indistinguishable from a correct one once stored. The
+picker answers that rather than ignoring it: the curated address book comes
+first, a pasted coordinate pair or map link is exact, and *anything* geocoded or
+pasted must be confirmed on a map before it commits. Free-text search is off
+unless `GEOCODER_URL` is set, and `/api/geocode` returns
+`{available: false, reason}` rather than an error so the UI can say why and
+point at the pin-drop. Dropping a pin works with no network at all, which is the
+path that makes "any address" unconditionally true.
+
+**Share links carry the household, not an id.** There is no server to look an id
+up in, so the link *is* the transport. Incoming links are third-party input and
+decode through the same zod schema that guards `localStorage`; importing is
+always confirmed, because a link can arrive from a chat, an old bookmark or a
+restored tab, and it replaces everything the recipient has.
+
+**Exclusion counts are simulated, not estimated.** `explainExclusions` reports
+how many areas a given change would admit by testing that change against every
+rejection. It also counts areas blocked by one constraint *alone* — a zone
+rejected for three reasons appears in three buckets of `rejectionCounts` but is
+unlocked by none of them individually, so that is the only honest number to put
+next to "loosen this".
 
 **Cost is labelled "price level", never "rent."** It is aggregated ₪/m² from sale
 transactions, and the sale-to-rent ratio varies systematically between central and
@@ -105,13 +146,15 @@ holds either way.
 
 ## Open decisions
 
-Both are one-line changes in `src/lib/scoring/config.ts` / the household model:
-
-- **`unreachable`** is currently a hard rejection. `UNREACHABLE_POLICY` flips it
-  to a heavy penalty instead. Matters for peripheral cells where transit routing
-  fails but driving is fine. Decide before P1.
+- **`unreachable`** is now a household setting rather than a constant, exposed
+  on the map screen as "keep areas with no route, scored badly". Once people can
+  enter arbitrary workplaces, whether an unroutable cell vanishes or merely
+  scores badly stops being a tuning knob and becomes a preference — a cell can
+  be unreachable by transit and an ordinary drive away.
+  `DEFAULT_UNREACHABLE_POLICY` is only the default for a household that has
+  never expressed a choice.
 - **Cost** acts as both a hard filter and a weighted metric. `maxCost: null`
-  disables the filter and leaves it purely weighted.
+  disables the filter and leaves it purely weighted. Still open.
 
 ## Tuning the ranking
 

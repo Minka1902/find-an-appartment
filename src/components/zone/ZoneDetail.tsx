@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { Star } from "lucide-react";
 
+import { cn } from "@/lib/cn";
 import { anchorDecay } from "@/lib/scoring/metrics/anchors";
 import type { ScoredZone } from "@/lib/scoring/types";
+import { useHouseholdStore } from "@/store/household";
 import { MetricBreakdown } from "./MetricBreakdown";
 
 /**
@@ -13,15 +16,36 @@ import { MetricBreakdown } from "./MetricBreakdown";
  * actually argue about, then the metric breakdown that justifies the score.
  */
 export function ZoneDetail({ zone }: { zone: ScoredZone }) {
+  const pinned = useHouseholdStore((state) => state.pinned);
+  const togglePin = useHouseholdStore((state) => state.togglePin);
+  const isPinned = pinned.includes(zone.zone.h3);
+
   return (
     <div className="space-y-6 pt-1">
-      <section className="flex items-baseline gap-3">
-        <div className="text-3xl font-semibold tabular-nums">
-          {Math.round(zone.score)}
+      <section className="flex items-center justify-between gap-3">
+        <div className="flex items-baseline gap-3">
+          <div className="text-3xl font-semibold tabular-nums">
+            {Math.round(zone.score)}
+          </div>
+          <div className="text-sm text-ink-muted">
+            match score · ranked #{zone.rank}
+          </div>
         </div>
-        <div className="text-sm text-ink-muted">
-          match score · ranked #{zone.rank}
-        </div>
+
+        <button
+          type="button"
+          onClick={() => togglePin(zone.zone.h3)}
+          aria-pressed={isPinned}
+          className={cn(
+            "touch-target flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium",
+            isPinned
+              ? "border-accent bg-accent-soft text-accent"
+              : "border-border-subtle hover:bg-surface-sunken",
+          )}
+        >
+          <Star size={14} aria-hidden fill={isPinned ? "currentColor" : "none"} />
+          {isPinned ? "Shortlisted" : "Shortlist"}
+        </button>
       </section>
 
       <section>

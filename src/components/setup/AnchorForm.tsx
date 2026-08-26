@@ -2,7 +2,7 @@
 
 import { Trash2 } from "lucide-react";
 
-import { AddressAutocomplete } from "@/components/setup/AddressAutocomplete";
+import { LocationPicker } from "@/components/setup/LocationPicker";
 import { ModePicker, NumberField } from "@/components/setup/fields";
 import type { Anchor, TravelMode } from "@/lib/scoring/types";
 import { useHouseholdStore } from "@/store/household";
@@ -35,9 +35,10 @@ export function AnchorForm({ anchor }: { anchor: Anchor }) {
       </div>
 
       <div className="space-y-3">
-        <AddressAutocomplete
+        <LocationPicker
           label="Where they live"
           value={anchor.locationLabel}
+          location={anchor.location}
           onSelect={({ label, location }) =>
             updateAnchor(anchor.id, { locationLabel: label, location })
           }

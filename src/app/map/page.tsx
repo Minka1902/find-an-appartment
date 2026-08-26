@@ -1,16 +1,26 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { BottomSheet } from "@/components/layout/BottomSheet";
 import { ResponsiveDetailPanel } from "@/components/layout/ResponsiveDetailPanel";
+import { ErrorState, RankingSkeleton } from "@/components/layout/states";
+import { ExclusionSummary } from "@/components/map/ExclusionSummary";
 import { MapLegend } from "@/components/map/MapLegend";
 import { RankedList } from "@/components/map/RankedList";
 import { WeightSliders } from "@/components/weights/WeightSliders";
+import { ExcludedZoneDetail } from "@/components/zone/ExcludedZoneDetail";
 import { ZoneDetail } from "@/components/zone/ZoneDetail";
 import { useIsWide, useMediaQuery } from "@/hooks/use-media-query";
-import { useHydrated, useRanking, useZoneDataset } from "@/hooks/use-ranking";
+import {
+  useHydrated,
+  useMetro,
+  useRanking,
+  useZoneDataset,
+} from "@/hooks/use-ranking";
+import { bboxContains } from "@/lib/geo";
 import { useHouseholdStore } from "@/store/household";
 
 // MapLibre touches `window` at module scope, so it must not be server-rendered.
@@ -34,16 +44,79 @@ export default function MapPage() {
   const household = useHouseholdStore((state) => state.household);
   const selectedZone = useHouseholdStore((state) => state.selectedZone);
   const selectZone = useHouseholdStore((state) => state.selectZone);
+  const pinned = useHouseholdStore((state) => state.pinned);
 
   const dataset = useZoneDataset();
-  const { result, isLoading } = useRanking();
+  const metro = useMetro();
+  const { result, isLoading, error, retry, rejectionsByH3 } = useRanking();
+
+  /**
+   * People and anchors whose location falls outside the ranked metro.
+   *
+   * Now that any coordinate can be entered, this is the difference between "no
+   * area suits you" and "we can't measure travel to Haifa" — and an empty board
+   * with no explanation reads as the former.
+   */
+  const outsideMetro = useMemo(() => {
+    const bbox = metro.data?.bbox;
+    if (!bbox) return [];
+    return [
+      ...household.people
+        .filter((person) => person.work && !bboxContains(bbox, person.work))
+        .map((person) => person.name || "Someone"),
+      ...household.anchors
+        .filter((anchor) => anchor.location && !bboxContains(bbox, anchor.location))
+        .map((anchor) => anchor.label || "An anchor"),
+    ];
+  }, [metro.data, household.people, household.anchors]);
 
   const [snapIndex, setSnapIndex] = useState(HALF);
   const [sheetHeight, setSheetHeight] = useState(0);
+  const [query, setQuery] = useState("");
+
+  /**
+   * The ranked list, narrowed to a town.
+   *
+   * A filter over the list rather than over the choropleth: the map keeps
+   * showing every area, because the point of narrowing to "Givatayim" is to see
+   * how it compares with its neighbours, not to hide them.
+   */
+  const visibleZones = useMemo(() => {
+    const scored = result?.scored ?? [];
+    const needle = query.trim().toLowerCase();
+    if (!needle) return scored;
+    return scored.filter((zone) =>
+      zone.zone.municipality.toLowerCase().includes(needle),
+    );
+  }, [result, query]);
 
   const selected = useMemo(
     () => result?.scored.find((zone) => zone.zone.h3 === selectedZone) ?? null,
     [result, selectedZone],
+  );
+
+  /**
+   * A selected cell that was filtered out rather than ranked.
+   *
+   * Excluded cells sit in the same fill layer and have always been clickable,
+   * but they carry no score, so selecting one used to open an empty panel —
+   * the least useful possible answer to "why not this one?".
+   */
+  const selectedRejection = useMemo(
+    () =>
+      selected === null && selectedZone
+        ? (rejectionsByH3.get(selectedZone) ?? null)
+        : null,
+    [selected, selectedZone, rejectionsByH3],
+  );
+
+  const selectedZoneGeometry = useMemo(
+    () =>
+      selectedRejection
+        ? (dataset.data?.zones.find((zone) => zone.h3 === selectedRejection.h3) ??
+          null)
+        : null,
+    [selectedRejection, dataset.data],
   );
 
   // Opening the detail panel on a phone gets the weights sheet out of the way,
@@ -72,17 +145,61 @@ export default function MapPage() {
     [isWide, sheetHeight],
   );
 
-  const controls = (
+  const controls = error ? (
+    <ErrorState
+      title="Couldn't rank areas"
+      message={`The area data failed to load. ${error.message}`}
+      onRetry={retry}
+    />
+  ) : isLoading ? (
+    <RankingSkeleton />
+  ) : (
     <div className="space-y-6 pb-4">
-      <WeightSliders household={household} />
+      {result ? (
+        <ExclusionSummary result={result} household={household} />
+      ) : null}
+
+      <WeightSliders
+        household={household}
+        droppedMetrics={result?.droppedMetrics}
+      />
       <div>
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-muted uppercase">
-          Best areas
-        </h3>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h3 className="text-xs font-semibold tracking-wide text-ink-muted uppercase">
+            Best areas
+          </h3>
+          {query ? (
+            <span className="text-[11px] text-ink-faint">
+              {visibleZones.length.toLocaleString()} in &ldquo;{query}&rdquo;
+            </span>
+          ) : null}
+        </div>
+
+        <div className="relative mb-2">
+          <Search
+            size={14}
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
+          />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter by town"
+            aria-label="Filter areas by town"
+            className="w-full rounded-lg border border-border-subtle bg-surface py-1.5 pr-2 pl-8 text-sm focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none"
+          />
+        </div>
+
         <RankedList
-          zones={result?.scored ?? []}
+          zones={visibleZones}
           selectedH3={selectedZone}
           onSelect={handleSelect}
+          emptyMessage={
+            query
+              ? `No matching areas in “${query}”.`
+              : "No areas passed your limits. Try raising a commute cap or your budget."
+          }
         />
       </div>
     </div>
@@ -91,9 +208,11 @@ export default function MapPage() {
   const summary = (
     <div className="flex items-baseline justify-between gap-2">
       <span className="text-sm font-semibold">
-        {isLoading
-          ? "Ranking areas…"
-          : `${(result?.scored.length ?? 0).toLocaleString()} areas match`}
+        {error
+          ? "Ranking unavailable"
+          : isLoading
+            ? "Ranking areas…"
+            : `${(result?.scored.length ?? 0).toLocaleString()} areas match`}
       </span>
       {result && result.rejections.length > 0 ? (
         <span className="text-[11px] text-ink-faint">
@@ -105,8 +224,11 @@ export default function MapPage() {
 
   if (!hydrated) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        Loading your household…
+      <div className="flex h-full min-h-0">
+        <aside className="hidden w-[380px] shrink-0 flex-col border-r border-border-subtle px-5 pt-4 lg:flex">
+          <RankingSkeleton />
+        </aside>
+        <div className="min-h-0 flex-1 bg-surface-sunken" />
       </div>
     );
   }
@@ -126,20 +248,43 @@ export default function MapPage() {
       ) : null}
 
       <div className="relative min-h-0 min-w-0 flex-1">
-        <ZoneMap
-          zones={dataset?.zones ?? []}
-          scored={result?.scored ?? []}
-          selectedH3={selectedZone}
-          onSelect={handleSelect}
-          isDark={isDark}
-          padding={padding}
-        />
+        {metro.data ? (
+          <ZoneMap
+            metro={metro.data}
+            zones={dataset.data?.zones ?? []}
+            scored={result?.scored ?? []}
+            selectedH3={selectedZone}
+            pinnedH3={pinned}
+            onSelect={handleSelect}
+            isDark={isDark}
+            padding={padding}
+          />
+        ) : (
+          <div className="h-full w-full bg-surface-sunken" />
+        )}
 
         <MapLegend
           isDark={isDark}
           excludedCount={result?.rejections.length ?? 0}
           className="absolute top-3 left-3 z-10"
         />
+
+        {/* An out-of-metro workplace makes every cell unreachable. Without
+            this the board just empties, which reads as "nowhere suits you". */}
+        {outsideMetro.length > 0 ? (
+          <div
+            role="status"
+            className="absolute inset-x-3 top-3 z-10 mx-auto max-w-sm rounded-lg border border-caution/35 bg-surface/95 px-3 py-2 text-[11px] leading-relaxed text-ink-muted shadow-sm backdrop-blur lg:left-auto lg:right-3 lg:mx-0"
+          >
+            <strong className="font-medium text-ink">
+              {outsideMetro.join(", ")}{" "}
+              {outsideMetro.length === 1 ? "is" : "are"} outside{" "}
+              {metro.data?.name ?? "the metro"}.
+            </strong>{" "}
+            Travel times are only measured inside it, so those targets read as
+            unreachable from most areas.
+          </div>
+        ) : null}
 
         {!isWide ? (
           <BottomSheet
@@ -155,12 +300,31 @@ export default function MapPage() {
       </div>
 
       <ResponsiveDetailPanel
-        open={selected !== null}
+        open={selected !== null || selectedRejection !== null}
         onClose={() => selectZone(null)}
-        title={selected ? `#${selected.rank} · ${selected.zone.municipality}` : ""}
-        subtitle={selected ? `Cell ${selected.zone.h3}` : undefined}
+        title={
+          selected
+            ? `#${selected.rank} · ${selected.zone.municipality}`
+            : selectedRejection
+              ? (selectedZoneGeometry?.municipality ?? "Excluded area")
+              : ""
+        }
+        subtitle={
+          selected
+            ? `Cell ${selected.zone.h3}`
+            : selectedRejection
+              ? "Excluded — not ranked"
+              : undefined
+        }
       >
-        {selected ? <ZoneDetail zone={selected} /> : null}
+        {selected ? (
+          <ZoneDetail zone={selected} />
+        ) : selectedRejection ? (
+          <ExcludedZoneDetail
+            zone={selectedZoneGeometry}
+            rejection={selectedRejection}
+          />
+        ) : null}
       </ResponsiveDetailPanel>
     </div>
   );

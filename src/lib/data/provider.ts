@@ -29,12 +29,47 @@ export interface Metro {
   bbox: typeof GUSH_DAN_BBOX;
 }
 
+/**
+ * One suggestion, from either source.
+ *
+ * The address book and the geocoder produce the same thing as far as the UI is
+ * concerned — a label and a real coordinate — but `source` is kept because the
+ * picker orders book entries first and labels geocoded ones as needing
+ * confirmation on the map (§5: a guessed transliteration must never be stored
+ * as if it were picked).
+ */
+export interface LocationSuggestion {
+  id: string;
+  label: string;
+  /** Hebrew label, where the source has one. */
+  labelHe?: string;
+  city: string;
+  location: LatLng;
+  source: "book" | "geocoder";
+}
+
+/**
+ * The outcome of a geocode attempt.
+ *
+ * Availability is part of the result rather than an exception: "no geocoder
+ * configured" and "the geocoder is down" are ordinary states this app is
+ * designed to run in, and the UI needs to say *which* rather than showing a
+ * generic failure over an empty list.
+ */
+export interface GeocodeOutcome {
+  available: boolean;
+  reason?: string;
+  results: LocationSuggestion[];
+}
+
 export interface DataProvider {
   readonly id: string;
   getMetro(): Promise<Metro>;
   getZoneDataset(): Promise<ZoneDataset>;
   getTravel(household: Household): Promise<Record<string, ZoneTravel>>;
   searchAddresses(query: string): Promise<AddressSuggestion[]>;
+  /** Free-text lookup. Never throws — see `GeocodeOutcome`. */
+  geocode(query: string): Promise<GeocodeOutcome>;
   getListings(topZones: ScoredZone[]): Promise<Listing[]>;
 }
 
@@ -74,6 +109,45 @@ export const fixtureProvider: DataProvider = {
 
   async searchAddresses(query) {
     return searchAddresses(query);
+  },
+
+  async geocode(query) {
+    if (query.trim().length < 3) {
+      return { available: true, results: [] };
+    }
+
+    try {
+      const response = await fetch(
+        `/api/geocode?q=${encodeURIComponent(query.trim())}`,
+      );
+      const body = (await response.json()) as {
+        available?: boolean;
+        reason?: string;
+        results?: {
+          id: string;
+          label: string;
+          city: string;
+          location: LatLng;
+        }[];
+      };
+
+      return {
+        available: body.available ?? false,
+        reason: body.reason,
+        results: (body.results ?? []).map((hit) => ({
+          ...hit,
+          source: "geocoder" as const,
+        })),
+      };
+    } catch {
+      // The route handler already turns upstream failures into a structured
+      // body; reaching here means the app's own origin was unreachable.
+      return {
+        available: false,
+        reason: "Address search is offline.",
+        results: [],
+      };
+    }
   },
 
   async getListings(topZones) {

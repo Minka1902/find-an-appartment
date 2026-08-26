@@ -6,16 +6,18 @@
  * almost always in this file rather than in `score-zones.ts`.
  */
 
+import type { UnreachablePolicy } from "./types";
+
 /**
- * Open decision #1 (§13). `reject` drops a zone entirely when any person can't
- * reach their workplace; `penalty` keeps it and scores the commute as
- * `UNREACHABLE_PENALTY_MINUTES` instead.
+ * Open decision #1 (§13) — now resolved in the UI rather than here.
  *
- * Kept as a constant so flipping it is a one-line change once the behaviour is
- * decided. Matters most for peripheral cells where transit routing fails but
- * driving is perfectly fine.
+ * The policy moved onto `Household.unreachablePolicy` once people could enter
+ * arbitrary workplaces: whether an unroutable cell should vanish or just score
+ * badly depends on the household's modes, not on a global tuning constant. This
+ * value is only the default for a household that has never expressed a choice,
+ * and it preserves the engine's original behaviour.
  */
-export const UNREACHABLE_POLICY: "reject" | "penalty" = "reject";
+export const DEFAULT_UNREACHABLE_POLICY: UnreachablePolicy = "reject";
 
 /** Stand-in commute time under `penalty` policy. Deliberately punitive. */
 export const UNREACHABLE_PENALTY_MINUTES = 120;

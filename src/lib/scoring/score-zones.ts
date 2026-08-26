@@ -6,7 +6,6 @@
  * isochrone union. No network, no React, no I/O.
  */
 
-import { UNREACHABLE_POLICY } from "./config";
 import { collectCommutes } from "./metrics/commute";
 import { applicableMetrics, METRICS } from "./registry";
 import { normalize, percentile } from "./stats";
@@ -14,6 +13,7 @@ import { WINSOR_HIGH, WINSOR_LOW } from "./config";
 import { anchorTargetId, personTargetId } from "./targets";
 import type {
   AnchorTime,
+  CommuteOverrun,
   DroppedMetric,
   Household,
   MetricContext,
@@ -64,13 +64,15 @@ function hardFilter(ctx: MetricContext): Rejection | null {
   const { zone, metrics, travel, household } = ctx;
   const reasons: RejectionReason[] = [];
   const details: string[] = [];
+  const commuteOverruns: CommuteOverrun[] = [];
+  let costOverrun: number | null = null;
 
   for (const person of household.people) {
     if (!person.work) continue;
     const minutes = travel.minutes[personTargetId(person.id)] ?? null;
 
     if (minutes === null) {
-      if (UNREACHABLE_POLICY === "reject") {
+      if (household.unreachablePolicy === "reject") {
         reasons.push("unreachable");
         details.push(`No route found for ${person.name}`);
       }
@@ -82,6 +84,12 @@ function hardFilter(ctx: MetricContext): Rejection | null {
       details.push(
         `${person.name}: ${Math.round(minutes)} min > ${person.maxCommuteMinutes} min limit`,
       );
+      commuteOverruns.push({
+        personId: person.id,
+        name: person.name,
+        minutes,
+        limit: person.maxCommuteMinutes,
+      });
     }
   }
 
@@ -92,6 +100,7 @@ function hardFilter(ctx: MetricContext): Rejection | null {
       details.push(
         `Price level ₪${Math.round(cost).toLocaleString("en-US")}/m² over budget`,
       );
+      costOverrun = cost;
     }
   }
 
@@ -110,6 +119,8 @@ function hardFilter(ctx: MetricContext): Rejection | null {
     // Dedupe: several people can trip the same reason.
     reasons: [...new Set(reasons)],
     detail: details.join("; "),
+    commuteOverruns,
+    costOverrun,
   };
 }
 

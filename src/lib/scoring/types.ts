@@ -16,6 +16,17 @@ export type Confidence = "high" | "medium" | "low";
 /** How a household resolves disagreement between its members' commutes. */
 export type CommuteAggregation = "mean" | "max" | "balanced";
 
+/**
+ * What to do with a zone nobody can route to (spec open decision #1).
+ *
+ * `reject` drops it entirely; `penalty` keeps it and scores the commute as
+ * `UNREACHABLE_PENALTY_MINUTES`. This lives on the household rather than in
+ * `config.ts` because it is a genuine preference, not a tuning constant: with
+ * arbitrary workplaces a peripheral cell can be unreachable by transit and a
+ * perfectly ordinary drive, and only the household knows which it meant.
+ */
+export type UnreachablePolicy = "reject" | "penalty";
+
 // ---------------------------------------------------------------------------
 // Household
 // ---------------------------------------------------------------------------
@@ -57,6 +68,8 @@ export interface Household {
   /** metricKey -> slider position, 0–1. */
   weights: Record<string, number>;
   commuteAggregation: CommuteAggregation;
+  /** Whether an unroutable zone is dropped or merely penalised. */
+  unreachablePolicy: UnreachablePolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,10 +192,29 @@ export type RejectionReason =
   | "no-parking"
   | "unreachable";
 
+/** One person's commute past their own limit, for this zone. */
+export interface CommuteOverrun {
+  personId: string;
+  name: string;
+  minutes: number;
+  limit: number;
+}
+
 export interface Rejection {
   h3: string;
   reasons: RejectionReason[];
+  /** Human-readable summary, for display. */
   detail: string;
+  /**
+   * The same facts in structured form.
+   *
+   * `detail` is a joined sentence built for a person to read; deriving "raise
+   * this cap to 55 and 340 more areas qualify" from it would mean parsing
+   * English back out of a display string. These carry the numbers directly.
+   */
+  commuteOverruns: CommuteOverrun[];
+  /** Price level here, when it exceeded the household's cap. */
+  costOverrun: number | null;
 }
 
 export interface DroppedMetric {

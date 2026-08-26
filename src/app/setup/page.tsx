@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeft, ArrowRight, Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
 
+import { CardListSkeleton, Skeleton } from "@/components/layout/states";
 import { AnchorForm } from "@/components/setup/AnchorForm";
 import { PersonForm } from "@/components/setup/PersonForm";
 import { NumberField, Toggle } from "@/components/setup/fields";
@@ -40,8 +41,14 @@ export default function SetupPage() {
 
   if (!hydrated) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        Loading…
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
+          <Skeleton className="h-7 w-56" />
+          <div className="mt-2 mb-6">
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <CardListSkeleton count={2} />
+        </div>
       </div>
     );
   }

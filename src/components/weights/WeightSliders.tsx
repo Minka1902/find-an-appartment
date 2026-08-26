@@ -5,7 +5,11 @@ import { RotateCcw } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { METRICS } from "@/lib/scoring/registry";
-import type { CommuteAggregation, Household } from "@/lib/scoring/types";
+import type {
+  CommuteAggregation,
+  DroppedMetric,
+  Household,
+} from "@/lib/scoring/types";
 import { useHouseholdStore } from "@/store/household";
 
 /**
@@ -31,10 +35,53 @@ const AGGREGATIONS: {
   { value: "max", label: "Protect worst", hint: "Optimize the worst commute" },
 ];
 
-export function WeightSliders({ household }: { household: Household }) {
+export function WeightSliders({
+  household,
+  droppedMetrics = [],
+}: {
+  household: Household;
+  /**
+   * Metrics the engine excluded from this run.
+   *
+   * Matters for `incomplete-coverage`: the metric applies to the household and
+   * its slider reads 60%, but it was dropped because some surviving zone had
+   * no value for it. Without saying so, the slider claims an influence the
+   * score does not have.
+   */
+  droppedMetrics?: DroppedMetric[];
+}) {
   const setWeight = useHouseholdStore((state) => state.setWeight);
   const resetWeights = useHouseholdStore((state) => state.resetWeights);
   const setAggregation = useHouseholdStore((state) => state.setAggregation);
+  const setUnreachablePolicy = useHouseholdStore(
+    (state) => state.setUnreachablePolicy,
+  );
+
+  /** Arrow keys move the selection, wrapping at both ends, as radios do. */
+  const onAggregationKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (step === 0) return;
+
+    event.preventDefault();
+    const current = AGGREGATIONS.findIndex(
+      (option) => option.value === household.commuteAggregation,
+    );
+    const next =
+      AGGREGATIONS[
+        (current + step + AGGREGATIONS.length) % AGGREGATIONS.length
+      ];
+
+    setAggregation(next.value);
+    // Selection follows focus in a radio group, so focus has to follow too.
+    event.currentTarget
+      .querySelector<HTMLButtonElement>(`[data-aggregation="${next.value}"]`)
+      ?.focus();
+  };
 
   return (
     <div className="space-y-5">
@@ -57,6 +104,11 @@ export function WeightSliders({ household }: { household: Household }) {
           {METRICS.map((metric) => {
             const available = metric.isAvailable?.(household) ?? true;
             const value = household.weights[metric.key] ?? metric.defaultWeight;
+            const uncounted = droppedMetrics.some(
+              (dropped) =>
+                dropped.key === metric.key &&
+                dropped.reason === "incomplete-coverage",
+            );
 
             return (
               <div key={metric.key} className={cn(!available && "opacity-45")}>
@@ -97,6 +149,11 @@ export function WeightSliders({ household }: { household: Household }) {
                       ? "No car — parking is excluded and its weight redistributed."
                       : "Not available for this household."}
                   </p>
+                ) : uncounted ? (
+                  <p className="mt-0.5 text-[11px] text-caution">
+                    Not counted — some matching areas have no data for this, so
+                    its weight went to the other metrics.
+                  </p>
                 ) : null}
               </div>
             );
@@ -109,9 +166,17 @@ export function WeightSliders({ household }: { household: Household }) {
           Whose commute wins
         </h3>
 
+        {/*
+          A radio group behaves as one tab stop with arrow keys moving between
+          options. Before this all three were separately tabbable and the arrow
+          keys did nothing, so it announced itself as a radio group and then
+          didn't act like one — which is worse than plain buttons, because the
+          role sets an expectation the widget breaks.
+        */}
         <div
           role="radiogroup"
           aria-label="Commute aggregation"
+          onKeyDown={onAggregationKeyDown}
           className="flex gap-1 rounded-lg bg-surface-sunken p-1"
         >
           {AGGREGATIONS.map((option) => {
@@ -122,6 +187,9 @@ export function WeightSliders({ household }: { household: Household }) {
                 type="button"
                 role="radio"
                 aria-checked={active}
+                // Roving tabindex: only the checked option is in the tab order.
+                tabIndex={active ? 0 : -1}
+                data-aggregation={option.value}
                 title={option.hint}
                 onClick={() => setAggregation(option.value)}
                 className={cn(
@@ -144,6 +212,40 @@ export function WeightSliders({ household }: { household: Household }) {
             )?.hint
           }
         </p>
+      </section>
+
+      {/*
+        Spec open decision #1, handed to the user instead of resolved by fiat.
+        A cell can be unroutable by transit and an ordinary drive away, so
+        whether that should delete it or merely cost it points depends on the
+        household — and it is the difference between an empty board and a full
+        one for anyone working near the metro edge.
+      */}
+      <section>
+        <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-muted uppercase">
+          Areas with no route
+        </h3>
+
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={household.unreachablePolicy === "penalty"}
+            onChange={(event) =>
+              setUnreachablePolicy(event.target.checked ? "penalty" : "reject")
+            }
+            className="touch-target mt-0.5 h-4 w-4 shrink-0 accent-accent"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">
+              Keep them, scored badly
+            </span>
+            <span className="block text-[11px] leading-relaxed text-ink-faint">
+              {household.unreachablePolicy === "penalty"
+                ? "Areas nobody can route to stay on the map with a heavy commute penalty."
+                : "Areas nobody can route to are excluded entirely."}
+            </span>
+          </span>
+        </label>
       </section>
     </div>
   );

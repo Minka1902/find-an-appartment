@@ -10,7 +10,9 @@ import type {
   CommuteAggregation,
   Household,
   Person,
+  UnreachablePolicy,
 } from "@/lib/scoring/types";
+import { parseHouseholdOrDemo } from "./household-schema";
 
 function newId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -40,10 +42,21 @@ export function blankAnchor(): Anchor {
   };
 }
 
+/** How many areas can be compared at once before the columns stop fitting. */
+export const MAX_PINNED = 4;
+
 interface HouseholdState {
   household: Household;
   /** Currently inspected cell, or null. Drives the detail panel/sheet. */
   selectedZone: string | null;
+  /**
+   * Areas the household has actually chosen, newest first.
+   *
+   * Deliberately outside `Household`: it is not an input to the ranking, and
+   * putting it there would change `travelKey` and rebuild every isochrone on
+   * each pin.
+   */
+  pinned: string[];
 
   setHousehold(household: Household): void;
   updatePerson(id: string, patch: Partial<Person>): void;
@@ -55,10 +68,13 @@ interface HouseholdState {
   setWeight(key: string, value: number): void;
   resetWeights(): void;
   setAggregation(aggregation: CommuteAggregation): void;
+  setUnreachablePolicy(policy: UnreachablePolicy): void;
   setCarCount(count: number): void;
   setRequiresStreetParking(required: boolean): void;
   setMaxCost(maxCost: number | null): void;
   selectZone(h3: string | null): void;
+  togglePin(h3: string): void;
+  clearPins(): void;
   loadDemo(): void;
 }
 
@@ -69,6 +85,7 @@ export const useHouseholdStore = create<HouseholdState>()(
       // the P0 exit criterion is one click away rather than behind a form.
       household: demoHousehold(),
       selectedZone: null,
+      pinned: [],
 
       setHousehold: (household) => set({ household }),
 
@@ -148,6 +165,11 @@ export const useHouseholdStore = create<HouseholdState>()(
           household: { ...state.household, commuteAggregation },
         })),
 
+      setUnreachablePolicy: (unreachablePolicy) =>
+        set((state) => ({
+          household: { ...state.household, unreachablePolicy },
+        })),
+
       setCarCount: (carCount) =>
         set((state) => ({
           household: {
@@ -169,18 +191,69 @@ export const useHouseholdStore = create<HouseholdState>()(
 
       selectZone: (selectedZone) => set({ selectedZone }),
 
-      loadDemo: () => set({ household: demoHousehold(), selectedZone: null }),
+      togglePin: (h3) =>
+        set((state) => {
+          if (state.pinned.includes(h3)) {
+            return { pinned: state.pinned.filter((pin) => pin !== h3) };
+          }
+          // Newest first, and capped: past four the comparison columns stop
+          // fitting, and dropping the oldest beats refusing the click.
+          return { pinned: [h3, ...state.pinned].slice(0, MAX_PINNED) };
+        }),
+
+      clearPins: () => set({ pinned: [] }),
+
+      loadDemo: () =>
+        set({ household: demoHousehold(), selectedZone: null, pinned: [] }),
     }),
     {
       name: "where-to-live/household",
-      version: 1,
+      version: 2,
+
+      /**
+       * `localStorage` is untrusted input: user-writable, and it survives across
+       * deploys that change the shape of `Household`. Validating it means a
+       * corrupt entry costs the user their setup — but an unvalidated one
+       * crashes the engine on boot, which costs them the same setup *and*
+       * leaves no way back into the app.
+       *
+       * Done in `merge` rather than `migrate` deliberately. `migrate` only runs
+       * when the stored version differs from `version` above, so a v2 entry
+       * that was hand-edited or truncated would sail straight through it.
+       * `merge` runs on every rehydration, which is the actual guarantee we
+       * want. It also subsumes the v1 -> v2 migration, since the schema
+       * defaults the newly-added `unreachablePolicy`.
+       */
+      merge: (persisted, current) => {
+        const stored = persisted as {
+          household?: unknown;
+          pinned?: unknown;
+        } | null;
+
+        return {
+          ...current,
+          household: parseHouseholdOrDemo(stored?.household),
+          // Pins are just H3 index strings; anything that isn't a string array
+          // of the right length is discarded rather than trusted.
+          pinned: Array.isArray(stored?.pinned)
+            ? stored.pinned
+                .filter((pin): pin is string => typeof pin === "string")
+                .slice(0, MAX_PINNED)
+            : [],
+        };
+      },
       // Rehydrate explicitly after mount rather than during store creation, so
       // the first client render matches the server's and hydration is clean.
       // `StoreHydrator` kicks it off.
       skipHydration: true,
       // Don't persist the transient selection — a refresh should land on the
-      // map, not reopen a panel from a previous session.
-      partialize: (state) => ({ household: state.household }),
+      // map, not reopen a panel from a previous session. Pins are the opposite:
+      // they are a deliberate choice and losing them on refresh would be the
+      // bug.
+      partialize: (state) => ({
+        household: state.household,
+        pinned: state.pinned,
+      }),
     },
   ),
 );

@@ -94,10 +94,27 @@ export const overpassSource: Source = {
   homepage: "https://wiki.openstreetmap.org/wiki/Overpass_API",
   licence: "OpenStreetMap data under ODbL; Overpass is a public read API",
   metrics: [
-    { metric: "transit", coverage: "complete", confidence: "high" },
-    { metric: "shelter", coverage: "complete", confidence: "medium" },
+    // Counts, not the fixture's 0–100 scores, so each of these can only replace
+    // every cell at once — which complete coverage of the bbox is what earns.
+    {
+      metric: "transit",
+      coverage: "complete",
+      confidence: "high",
+      sameUnitsAsFixture: false,
+    },
+    {
+      metric: "shelter",
+      coverage: "complete",
+      confidence: "medium",
+      sameUnitsAsFixture: false,
+    },
     // §12 risk 2: a weak proxy outside Tel Aviv. Recorded, not trusted.
-    { metric: "parking", coverage: "complete", confidence: "low" },
+    {
+      metric: "parking",
+      coverage: "complete",
+      confidence: "low",
+      sameUnitsAsFixture: false,
+    },
   ],
 
   async collect(ctx: CrawlContext): Promise<SourceResult> {

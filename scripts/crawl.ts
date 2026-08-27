@@ -21,10 +21,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { aggregate } from "@/lib/crawler/aggregate";
+import { aggregate, cellFor } from "@/lib/crawler/aggregate";
 import { PoliteFetcher } from "@/lib/crawler/fetcher";
 import { getSource, SOURCES } from "@/lib/crawler/registry";
 import type { Observation, Source } from "@/lib/crawler/types";
+import type { TransactionFile } from "@/lib/data/measured";
 import { fixtureProvider } from "@/lib/data/provider";
 
 interface Args {
@@ -216,6 +217,14 @@ async function main(): Promise<number> {
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${JSON.stringify(dataset, null, 2)}\n`, "utf8");
 
+  const transactionsOut = out.replace(/\.metrics\.json$/, ".transactions.json");
+  const transactionCount = await writeTransactions(
+    transactionsOut,
+    metro.id,
+    zones,
+    collected,
+  );
+
   console.log(
     `\nWrote ${out}` +
       `\n  ${total.toLocaleString()} observations -> ${measuredCells.toLocaleString()} of ${zones.length.toLocaleString()} cells`,
@@ -238,12 +247,84 @@ async function main(): Promise<number> {
         `(${entry.high.toLocaleString()} high, ${entry.medium.toLocaleString()} medium confidence)`,
     );
   }
+  if (transactionCount > 0) {
+    console.log(
+      `\nWrote ${transactionsOut}` +
+        `\n  ${transactionCount.toLocaleString()} recorded sales, shown on the shortlist as real` +
+        `\n  transacted addresses — sales, never presented as homes for rent.`,
+    );
+  }
+
   console.log(
     "\nOnly medium- and high-confidence values replace a fixture value; the rest\n" +
       "are recorded as supporting evidence. See src/lib/data/measured.ts.\n",
   );
 
+  for (const [metric, summary] of Object.entries(dataset.metrics)) {
+    if (summary.replaces === "none") {
+      console.log(`  not applied: ${metric} — ${summary.reason ?? "see the file"}`);
+    }
+  }
+
   return 0;
+}
+
+/**
+ * The address-level half of the crawl.
+ *
+ * Separate from the metrics file because it is read by one screen and is much
+ * the larger of the two — no reason for the map to download recorded sales it
+ * will never show. Capped per cell and kept newest-first, since the shortlist
+ * shows a handful and an unbounded file would grow without limit.
+ */
+const MAX_TRANSACTIONS_PER_CELL = 8;
+
+async function writeTransactions(
+  out: string,
+  metro: string,
+  zones: { h3: string; municipality: string }[],
+  collected: { observations: Observation[] }[],
+): Promise<number> {
+  const grid = new Map(zones.map((zone) => [zone.h3, zone.municipality]));
+  const cells: TransactionFile["cells"] = {};
+  let total = 0;
+
+  for (const source of collected) {
+    for (const observation of source.observations) {
+      const detail = observation.record;
+      if (!detail) continue;
+
+      const h3 = cellFor(observation.location.lat, observation.location.lng);
+      const municipality = grid.get(h3);
+      if (!municipality) continue;
+
+      (cells[h3] ??= []).push({
+        address: detail.address,
+        municipality,
+        sizeSqm: detail.sizeSqm,
+        price: detail.price,
+        pricePerSqm: Math.round(observation.value),
+        date: detail.date,
+      });
+    }
+  }
+
+  for (const [h3, records] of Object.entries(cells)) {
+    records.sort((a, b) => b.date.localeCompare(a.date));
+    cells[h3] = records.slice(0, MAX_TRANSACTIONS_PER_CELL);
+    total += cells[h3].length;
+  }
+
+  if (total === 0) return 0;
+
+  const file: TransactionFile = {
+    metro,
+    generatedAt: new Date().toISOString(),
+    cells,
+  };
+  await mkdir(path.dirname(out), { recursive: true });
+  await writeFile(out, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+  return total;
 }
 
 main().then(

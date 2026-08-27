@@ -63,7 +63,7 @@ describe("aggregate", () => {
         {
           id: "nadlan",
           describe: "transactions",
-          metrics: [{ metric: "cost", coverage: "sparse", confidence: "high" }],
+          metrics: [{ metric: "cost", coverage: "sparse", confidence: "high", sameUnitsAsFixture: true }],
           observations: [
             at(CENTRE, "cost", 40000),
             at(CENTRE, "cost", 42000),
@@ -91,7 +91,7 @@ describe("aggregate", () => {
         {
           id: "nadlan",
           describe: "transactions",
-          metrics: [{ metric: "cost", coverage: "sparse", confidence: "high" }],
+          metrics: [{ metric: "cost", coverage: "sparse", confidence: "high", sameUnitsAsFixture: true }],
           observations: [at(CENTRE, "cost", 40000)],
         },
       ],
@@ -108,7 +108,7 @@ describe("aggregate", () => {
         {
           id: "overpass",
           describe: "stops",
-          metrics: [{ metric: "transit", coverage: "complete", confidence: "high" }],
+          metrics: [{ metric: "transit", coverage: "complete", confidence: "high", sameUnitsAsFixture: false }],
           observations: [at(CENTRE, "transit", 1), at(CENTRE, "transit", 1)],
         },
       ],
@@ -126,7 +126,7 @@ describe("aggregate", () => {
         {
           id: "overpass",
           describe: "stops",
-          metrics: [{ metric: "transit", coverage: "complete", confidence: "high" }],
+          metrics: [{ metric: "transit", coverage: "complete", confidence: "high", sameUnitsAsFixture: false }],
           observations: [],
         },
       ],
@@ -143,7 +143,7 @@ describe("aggregate", () => {
         {
           id: "nadlan",
           describe: "transactions",
-          metrics: [{ metric: "cost", coverage: "sparse", confidence: "high" }],
+          metrics: [{ metric: "cost", coverage: "sparse", confidence: "high", sameUnitsAsFixture: true }],
           // Haifa.
           observations: [
             { metric: "cost", location: { lat: 32.794, lng: 34.989 }, value: 30000 },
@@ -158,5 +158,79 @@ describe("aggregate", () => {
   it("records the resolution so a stale file cannot be read against a new grid", () => {
     const dataset = aggregate({ metro: "gush-dan", zones: ZONES, sources: [] });
     expect(dataset.resolution).toBe(ZONE_RESOLUTION);
+  });
+});
+
+describe("aggregate verdicts", () => {
+  const complete = (confidence: "high" | "low", observations: Observation[]) =>
+    aggregate({
+      metro: "gush-dan",
+      zones: ZONES,
+      sources: [
+        {
+          id: "overpass",
+          describe: "stops",
+          metrics: [
+            {
+              metric: "transit",
+              coverage: "complete",
+              confidence,
+              sameUnitsAsFixture: false,
+            },
+          ],
+          observations,
+        },
+      ],
+    });
+
+  it("clears a same-units metric for per-cell replacement", () => {
+    const dataset = aggregate({
+      metro: "gush-dan",
+      zones: ZONES,
+      sources: [
+        {
+          id: "nadlan",
+          describe: "transactions",
+          metrics: [
+            {
+              metric: "cost",
+              coverage: "sparse",
+              confidence: "high",
+              sameUnitsAsFixture: true,
+            },
+          ],
+          observations: [at(CENTRE, "cost", 40000)],
+        },
+      ],
+    });
+
+    expect(dataset.metrics.cost).toMatchObject({ replaces: "per-cell", cells: 1 });
+  });
+
+  it("clears a differently-scaled metric only for all-at-once replacement", () => {
+    // Counts cannot sit beside the fixture's 0–100 scores on one axis. Both
+    // cells find something here, so the signal floor is comfortably cleared.
+    const observations = [at(CENTRE, "transit", 1), at(FAR, "transit", 1)];
+    expect(complete("high", observations).metrics.transit).toMatchObject({
+      replaces: "all",
+      cells: ZONES.length,
+      cellsWithSignal: ZONES.length,
+    });
+  });
+
+  it("refuses a complete metric that found almost nothing", () => {
+    // A timeout, a rate limit and an unmapped area all arrive as a grid of
+    // confident zeros. Replacing a modelled signal with that is worse than
+    // leaving it alone.
+    const summary = complete("high", []).metrics.transit;
+    expect(summary?.cellsWithSignal).toBe(0);
+    expect(summary?.replaces).toBe("none");
+    expect(summary?.reason).toMatch(/floor/);
+  });
+
+  it("refuses a low-confidence metric outright, and says why", () => {
+    const summary = complete("low", [at(CENTRE, "transit", 1)]).metrics.transit;
+    expect(summary?.replaces).toBe("none");
+    expect(summary?.reason).toMatch(/low confidence/);
   });
 });

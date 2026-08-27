@@ -19,9 +19,11 @@ import type { Confidence, Zone } from "@/lib/scoring/types";
 import type {
   MeasuredDataset,
   MeasuredMetric,
+  MeasuredMetricSummary,
   MeasuredValue,
   MetricCoverage,
   Observation,
+  Replacement,
 } from "./types";
 
 /**
@@ -43,6 +45,18 @@ export const MIN_SAMPLES_HIGH = 8;
  * here" and stops the layer looking like scattered dots.
  */
 export const COUNT_RING = 1;
+
+/**
+ * How much of the grid a complete metric must actually find something in.
+ *
+ * A complete metric covers every cell by construction — that is what
+ * "complete" means — so cell coverage alone can never catch a query that
+ * timed out, was rate-limited into a partial answer, or hit an area nobody has
+ * mapped. All three arrive as a grid of confident zeros, which would replace a
+ * modelled signal with an artefact. Below this share the fixture stays, and the
+ * file says why.
+ */
+export const MIN_COMPLETE_SIGNAL = 0.02;
 
 export interface AggregateInput {
   metro: string;
@@ -73,9 +87,57 @@ export function cellFor(lat: number, lng: number): string {
   return latLngToCell(lat, lng, ZONE_RESOLUTION);
 }
 
+/**
+ * May this metric stand in for the fixture value, and how?
+ *
+ * The units question decides everything. Sale prices are ₪/m² on both sides, so
+ * a measured cell can sit beside a generated one. A count of bus stops cannot —
+ * mixing counts with the fixture's 0–100 scores puts two scales on one axis and
+ * silently reorders the board — so those metrics are all-or-nothing, and are
+ * cleared only once every ranked cell has a number.
+ */
+function verdictFor(
+  metric: MetricCoverage,
+  measuredCells: number,
+  totalCells: number,
+  cellsWithSignal: number,
+): { replaces: Replacement; reason?: string } {
+  if (metric.confidence === "low") {
+    return {
+      replaces: "none",
+      reason: `low confidence at source — recorded, but not applied`,
+    };
+  }
+
+  if (metric.sameUnitsAsFixture) return { replaces: "per-cell" };
+
+  if (measuredCells < totalCells) {
+    return {
+      replaces: "none",
+      reason:
+        `not in the fixture's units, so it can only replace every cell at once — ` +
+        `${measuredCells} of ${totalCells} covered`,
+    };
+  }
+
+  const share = totalCells === 0 ? 0 : cellsWithSignal / totalCells;
+  if (share < MIN_COMPLETE_SIGNAL) {
+    return {
+      replaces: "none",
+      reason:
+        `only ${cellsWithSignal} of ${totalCells} cells found anything, below the ` +
+        `${Math.round(MIN_COMPLETE_SIGNAL * 100)}% floor — a partial or failed ` +
+        `query looks exactly like this, so the fixture stays`,
+    };
+  }
+
+  return { replaces: "all" };
+}
+
 export function aggregate(input: AggregateInput): MeasuredDataset {
   const grid = new Set(input.zones.map((zone) => zone.h3));
   const cells: MeasuredDataset["cells"] = {};
+  const metrics: MeasuredDataset["metrics"] = {};
 
   const put = (h3: string, metric: MeasuredMetric, value: MeasuredValue) => {
     cells[h3] ??= {};
@@ -87,7 +149,12 @@ export function aggregate(input: AggregateInput): MeasuredDataset {
   };
 
   for (const source of input.sources) {
-    for (const { metric, coverage, confidence } of source.metrics) {
+    for (const {
+      metric,
+      coverage,
+      confidence,
+      sameUnitsAsFixture,
+    } of source.metrics) {
       const relevant = source.observations.filter((o) => o.metric === metric);
 
       // Bucket by cell, dropping anything outside the ranked grid.
@@ -100,6 +167,25 @@ export function aggregate(input: AggregateInput): MeasuredDataset {
         else byCell.set(h3, [observation.value]);
       }
 
+      const summarise = (measuredCells: number, cellsWithSignal: number): void => {
+        const summary: MeasuredMetricSummary = {
+          coverage,
+          source: source.id,
+          cells: measuredCells,
+          cellsWithSignal,
+          confidence,
+          ...verdictFor(
+            { metric, coverage, confidence, sameUnitsAsFixture },
+            measuredCells,
+            input.zones.length,
+            cellsWithSignal,
+          ),
+        };
+        // A metric offered by two sources keeps the wider coverage.
+        const existing = metrics[metric];
+        if (!existing || existing.cells < measuredCells) metrics[metric] = summary;
+      };
+
       if (coverage === "sparse") {
         // A price level is the middle of what actually sold there. The median,
         // not the mean: one penthouse should not reprice a street.
@@ -111,11 +197,14 @@ export function aggregate(input: AggregateInput): MeasuredDataset {
             source: source.id,
           });
         }
+        // Every sparse cell has a real record behind it by definition.
+        summarise(byCell.size, byCell.size);
         continue;
       }
 
       // Complete coverage: every cell in the grid gets a number, including the
       // zeros — the query covered the whole bbox, so "none here" is a finding.
+      let cellsWithSignal = 0;
       for (const zone of input.zones) {
         let total = 0;
         let contributing = 0;
@@ -125,6 +214,8 @@ export function aggregate(input: AggregateInput): MeasuredDataset {
           for (const value of values) total += value;
           contributing += values.length;
         }
+
+        if (total > 0) cellsWithSignal++;
 
         put(zone.h3, metric, {
           value: total,
@@ -137,6 +228,8 @@ export function aggregate(input: AggregateInput): MeasuredDataset {
           source: source.id,
         });
       }
+
+      summarise(input.zones.length, cellsWithSignal);
     }
   }
 
@@ -149,6 +242,7 @@ export function aggregate(input: AggregateInput): MeasuredDataset {
       describe: source.describe,
       records: source.observations.length,
     })),
+    metrics,
     cells,
   };
 }

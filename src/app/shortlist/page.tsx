@@ -10,6 +10,7 @@ import {
   Skeleton,
 } from "@/components/layout/states";
 import { useAsync } from "@/hooks/use-async";
+import type { Transaction } from "@/lib/data/measured";
 import { provider } from "@/lib/data/provider";
 import type { Listing } from "@/lib/fixtures/listings";
 import { CompareZones } from "@/components/zone/CompareZones";
@@ -68,6 +69,22 @@ export default function ShortlistPage() {
     [listingsKey],
   );
   const listings = useAsync<Listing[]>(loadListings, listingsKey);
+
+  /**
+   * Real transactions in the shortlisted cells, when a crawl has produced any.
+   *
+   * Loaded beside the illustrative rows rather than instead of them: they answer
+   * different questions. A recorded sale says what this street actually costs;
+   * the generated rows show the shape of the comparison for a rental, which is
+   * what someone is usually looking for and which no legal source provides.
+   */
+  const loadTransactions = useCallback(
+    () => provider.getTransactions(topZones),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [listingsKey],
+  );
+  const transactions = useAsync<Transaction[]>(loadTransactions, listingsKey);
+  const recordedSales = transactions.data ?? [];
 
   const people = result?.scored[0]?.commutes ?? [];
 
@@ -150,7 +167,11 @@ export default function ShortlistPage() {
           </section>
         ) : null}
 
-        <IllustrativeNotice />
+        {recordedSales.length > 0 ? (
+          <RecordedSales transactions={recordedSales} />
+        ) : null}
+
+        <IllustrativeNotice hasRecordedSales={recordedSales.length > 0} />
 
         {/* Compact: cards. */}
         <ul className="mt-5 space-y-3 lg:hidden">
@@ -236,12 +257,104 @@ export default function ShortlistPage() {
 // ---------------------------------------------------------------------------
 
 /**
+ * Real transactions, in the areas being shortlisted.
+ *
+ * The one part of this screen that is measured rather than generated. It is
+ * kept visually and textually distinct from the rows below because a recorded
+ * sale is not a home for rent: the sale-to-rent ratio varies systematically
+ * between central and peripheral areas, so quoting one as the other would be a
+ * confidently wrong number rather than a missing one.
+ *
+ * Only appears once `npm run crawl` has produced a transactions file — see
+ * `src/lib/data/measured.ts`.
+ */
+function RecordedSales({ transactions }: { transactions: Transaction[] }) {
+  return (
+    <section className="mt-6">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h2 className="text-xs font-semibold tracking-wide text-ink-muted uppercase">
+          Recorded sales here
+        </h2>
+        <span className="text-[11px] text-ink-faint">
+          {transactions.length.toLocaleString()} from the national open-data
+          portal
+        </span>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-border-subtle">
+        <table className="w-full text-sm">
+          <caption className="sr-only">
+            Property sales recorded in the shortlisted areas. These are past sale
+            transactions, not homes currently available to rent.
+          </caption>
+          <thead className="bg-surface-raised text-left">
+            <tr className="border-b border-border-subtle">
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Address
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Size
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Sold for
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Per m²
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                When
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.map((sale) => (
+              <tr
+                key={sale.id}
+                className="border-b border-border-subtle last:border-0"
+              >
+                <td className="px-4 py-2.5">
+                  <div className="font-medium">{sale.address}</div>
+                  <div className="text-[11px] text-ink-faint">
+                    {sale.municipality} · cell {sale.h3.slice(-6)}
+                  </div>
+                </td>
+                <td className="px-4 py-2.5 tabular-nums whitespace-nowrap">
+                  {sale.sizeSqm} m²
+                </td>
+                <td className="px-4 py-2.5 tabular-nums whitespace-nowrap">
+                  ₪{sale.price.toLocaleString()}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums whitespace-nowrap">
+                  ₪{sale.pricePerSqm.toLocaleString()}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums whitespace-nowrap">
+                  {sale.date || "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+        Past sale transactions at real addresses, not homes for rent. They are
+        what the price level for these areas is computed from.
+      </p>
+    </section>
+  );
+}
+
+/**
  * Yad2 and Madlan both block automated access, and there may be no legal path
  * to real address-level listings at all. Until that's resolved these rows are
  * generated examples, and saying so plainly is the only honest option — the
  * commute figures are the part that holds regardless.
  */
-function IllustrativeNotice() {
+function IllustrativeNotice({
+  hasRecordedSales,
+}: {
+  hasRecordedSales: boolean;
+}) {
   return (
     <div className="mt-4 flex gap-2.5 rounded-lg border border-caution/35 bg-caution/8 p-3">
       <AlertTriangle
@@ -257,6 +370,9 @@ function IllustrativeNotice() {
         are generated to show the shape of the comparison. The commute times are
         computed the same way they would be for a real address, and the areas
         themselves are ranked on real criteria.
+        {hasRecordedSales
+          ? " The recorded sales above are the real ones — but they are sales, not rentals."
+          : null}
       </p>
     </div>
   );

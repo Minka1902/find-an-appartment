@@ -153,7 +153,14 @@ export const nadlanSource: Source = {
   metrics: [
     // Sparse: a cell with no recorded sales has an unknown price level, not a
     // price level of zero, and must keep whatever the fixture said.
-    { metric: "cost", coverage: "sparse", confidence: "high" },
+    // Same units as the fixture — ₪/m² on both sides — so a measured cell can
+    // sit beside a generated one without breaking the normalization.
+    {
+      metric: "cost",
+      coverage: "sparse",
+      confidence: "high",
+      sameUnitsAsFixture: true,
+    },
   ],
 
   async collect(ctx: CrawlContext): Promise<SourceResult> {
@@ -210,14 +217,18 @@ export const nadlanSource: Source = {
           if (price === null || area === null || area < 20 || area > 600) continue;
           if (price < 100_000 || price > 100_000_000) continue;
 
-          const date = pick(row, DATE_FIELDS);
-          const address = pick(row, ADDRESS_FIELDS);
+          const date = String(pick(row, DATE_FIELDS) ?? "").slice(0, 10);
+          const address = String(pick(row, ADDRESS_FIELDS) ?? "").trim();
 
           observations.push({
             metric: "cost",
             location,
             value: price / area,
             note: [address, date].filter(Boolean).join(" · ") || undefined,
+            // Kept whole, not just as a number: a transaction happened at a
+            // real address on a real date, and that is the only address-level
+            // material this app has any legitimate access to.
+            record: address ? { address, date, sizeSqm: area, price } : undefined,
           });
           usable++;
         }

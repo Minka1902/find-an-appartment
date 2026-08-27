@@ -39,6 +39,16 @@ export interface Listing {
   commutes: ListingCommute[];
   /** Always true here. Kept explicit so the UI cannot forget to disclose it. */
   isIllustrative: boolean;
+  /**
+   * Where the row came from.
+   *
+   * Only ever `"generated"` today, and named rather than implied so that a real
+   * record can never be mistaken for one of these. Real transactions are a
+   * different type entirely (`Transaction` in `lib/data/measured.ts`) precisely
+   * because a recorded sale is not a home for rent, and giving them one shape
+   * would invite exactly that conflation.
+   */
+  source: "generated";
 }
 
 const STREET_NAMES = [
@@ -119,6 +129,7 @@ function buildListingsForZone(zone: ScoredZone): Listing[] {
         minutes: exactMinutes(commute.minutes, `${seed}:${commute.personId}`),
       })),
       isIllustrative: true,
+      source: "generated",
     });
   }
 

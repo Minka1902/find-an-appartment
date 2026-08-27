@@ -1,0 +1,9 @@
+{
+  "note": "No crawl has been run. Every metric here falls back to the generated fixtures in src/lib/fixtures/zones.ts. Run `npm run crawl` to replace this with real measurements — see the Real data section of the README. Committed empty rather than absent so a fresh clone does not log a 404 for its own expected state.",
+  "metro": "gush-dan",
+  "generatedAt": "1970-01-01T00:00:00.000Z",
+  "resolution": 9,
+  "sources": [],
+  "metrics": {},
+  "cells": {}
+}

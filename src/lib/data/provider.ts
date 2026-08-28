@@ -12,21 +12,18 @@
  */
 
 import type { AddressSuggestion } from "@/lib/fixtures/addresses";
-import { searchAddresses } from "@/lib/fixtures/addresses";
-import { GUSH_DAN_BBOX, GUSH_DAN_CENTER } from "@/lib/fixtures/geography";
-import { buildIsochrones, computeZoneTravel } from "@/lib/fixtures/isochrones";
-import { buildListings, type Listing } from "@/lib/fixtures/listings";
+import type { Listing } from "@/lib/fixtures/listings";
 import type { ZoneDataset } from "@/lib/fixtures/zones";
-import { getZoneDataset } from "@/lib/fixtures/zones";
-import type { LatLng } from "@/lib/geo";
-import { householdTargets } from "@/lib/scoring/targets";
+import type { BBox, LatLng } from "@/lib/geo";
 import type { Household, ScoredZone, ZoneTravel } from "@/lib/scoring/types";
+import { fixtureProvider } from "./fixture-provider";
+import { measuredProvider, type Transaction } from "./measured";
 
 export interface Metro {
   id: string;
   name: string;
   center: LatLng;
-  bbox: typeof GUSH_DAN_BBOX;
+  bbox: BBox;
 }
 
 /**
@@ -71,88 +68,23 @@ export interface DataProvider {
   /** Free-text lookup. Never throws — see `GeocodeOutcome`. */
   geocode(query: string): Promise<GeocodeOutcome>;
   getListings(topZones: ScoredZone[]): Promise<Listing[]>;
+  /**
+   * Recorded property transactions in these cells.
+   *
+   * Separate from `getListings` because they are a different kind of thing: a
+   * sale that happened at a real address, not a home currently for rent. Empty
+   * until a crawl has been run — see `measured.ts`.
+   */
+  getTransactions(topZones: ScoredZone[]): Promise<Transaction[]>;
 }
 
-export const fixtureProvider: DataProvider = {
-  id: "fixture",
+/**
+ * The provider the app uses.
+ *
+ * `measuredProvider` composes `fixtureProvider` and overlays whatever a crawl
+ * has produced, so this is a single switch rather than a fork: with no crawl
+ * output present it behaves exactly as the fixture provider did.
+ */
+export const provider: DataProvider = measuredProvider;
 
-  async getMetro() {
-    return {
-      id: "gush-dan",
-      name: "Gush Dan",
-      center: GUSH_DAN_CENTER,
-      bbox: GUSH_DAN_BBOX,
-    };
-  },
-
-  async getZoneDataset() {
-    return getZoneDataset();
-  },
-
-  async getTravel(household) {
-    const { zones } = getZoneDataset();
-
-    // One isochrone set per target — people + anchors, typically 5–10.
-    const isochrones = householdTargets(household).map((target) => {
-      const person = household.people.find(
-        (candidate) => `person:${candidate.id}` === target.id,
-      );
-      const anchor = household.anchors.find(
-        (candidate) => `anchor:${candidate.id}` === target.id,
-      );
-      const modes = person?.modes ?? anchor?.modes ?? ["transit"];
-      return buildIsochrones(target, modes);
-    });
-
-    return computeZoneTravel(zones, isochrones);
-  },
-
-  async searchAddresses(query) {
-    return searchAddresses(query);
-  },
-
-  async geocode(query) {
-    if (query.trim().length < 3) {
-      return { available: true, results: [] };
-    }
-
-    try {
-      const response = await fetch(
-        `/api/geocode?q=${encodeURIComponent(query.trim())}`,
-      );
-      const body = (await response.json()) as {
-        available?: boolean;
-        reason?: string;
-        results?: {
-          id: string;
-          label: string;
-          city: string;
-          location: LatLng;
-        }[];
-      };
-
-      return {
-        available: body.available ?? false,
-        reason: body.reason,
-        results: (body.results ?? []).map((hit) => ({
-          ...hit,
-          source: "geocoder" as const,
-        })),
-      };
-    } catch {
-      // The route handler already turns upstream failures into a structured
-      // body; reaching here means the app's own origin was unreachable.
-      return {
-        available: false,
-        reason: "Address search is offline.",
-        results: [],
-      };
-    }
-  },
-
-  async getListings(topZones) {
-    return buildListings(topZones);
-  },
-};
-
-export const provider: DataProvider = fixtureProvider;
+export { fixtureProvider };

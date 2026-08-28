@@ -1,7 +1,11 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import { excludedColor, legendGradient } from "./score-color";
+import {
+  EXCLUDED_FILL_OPACITY,
+  excludedColor,
+  legendGradient,
+} from "./score-color";
 
 /**
  * The scale legend.
@@ -50,7 +54,7 @@ export function MapLegend({
           <span
             aria-hidden
             className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-            style={{ background: excludedColor(isDark), opacity: 0.55 }}
+            style={{ background: excludedColor(isDark), opacity: EXCLUDED_FILL_OPACITY }}
           />
           <span>
             {excludedCount.toLocaleString()} excluded by your limits

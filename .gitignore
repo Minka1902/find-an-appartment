@@ -45,3 +45,6 @@ next-env.d.ts
 
 # build artifacts
 /tsconfig.tsbuildinfo
+
+# crawler response cache — re-fetchable, and someone else's data
+/.cache/

@@ -1,7 +1,7 @@
 "use client";
 
 import * as maplibregl from "maplibre-gl";
-import type { Map as MapLibreMap } from "maplibre-gl";
+import type { LngLatBoundsLike, Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -10,8 +10,13 @@ import { useIsCoarsePointer } from "@/hooks/use-media-query";
 import type { Metro } from "@/lib/data/provider";
 import type { ScoredZone, Zone } from "@/lib/scoring/types";
 import { basemapStyle } from "./basemap";
+import { isPointInPaddedBox, type Padding } from "./camera";
 import "./worker-url";
-import { fillColorExpression } from "./score-color";
+import {
+  EXCLUDED_FILL_OPACITY,
+  fillColorExpression,
+  SCORED_FILL_OPACITY,
+} from "./score-color";
 
 /**
  * The score choropleth.
@@ -24,6 +29,13 @@ import { fillColorExpression } from "./score-color";
  * 2. Resizing listens to a `ResizeObserver` on the container, not to window
  *    resize — the sidebar and bottom sheet change the map's box without the
  *    window ever changing size.
+ *
+ * The camera is the third thing worth knowing about. Framing the metro is not
+ * a one-off: the detail panel is a flex *sibling*, so opening it takes 420px
+ * away from the map's box, and on compact the bottom sheet grows into the
+ * bottom of it. `map.resize()` keeps centre and zoom, so every one of those
+ * changes used to crop the metro without ever re-framing it. See `useEffect`
+ * on `boxSize` below.
  */
 
 
@@ -64,7 +76,7 @@ export interface ZoneMapProps {
   onSelect(h3: string | null): void;
   isDark: boolean;
   /** Space reserved by overlaying chrome, so `fitBounds` doesn't hide cells. */
-  padding: { top: number; right: number; bottom: number; left: number };
+  padding: Padding;
 }
 
 export function ZoneMap({
@@ -191,12 +203,34 @@ export function ZoneMap({
   }, []);
 
   // --- Keep the canvas sized to its container ------------------------------
+  /**
+   * The container's box, as state rather than a bare side effect.
+   *
+   * The camera effect below has to re-run when the box changes, and the box
+   * changes for reasons React never sees: the 420px detail panel opening as a
+   * flex sibling, the sidebar appearing at `lg`, the window resizing. Observing
+   * it into state is what turns those into a dependency.
+   */
+  const [boxSize, setBoxSize] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const observer = new ResizeObserver(() => {
+    const observer = new ResizeObserver(([entry]) => {
       mapRef.current?.resize();
+      const { width, height } = entry.contentRect;
+      // Round: sub-pixel jitter from a flex layout would otherwise re-run the
+      // camera effect on every animation frame of a panel transition.
+      setBoxSize((current) =>
+        current &&
+        current.width === Math.round(width) &&
+        current.height === Math.round(height)
+          ? current
+          : { width: Math.round(width), height: Math.round(height) },
+      );
     });
     observer.observe(container);
     return () => observer.disconnect();
@@ -230,17 +264,92 @@ export function ZoneMap({
 
     addZoneLayers(map, zones, isDark);
     applyScores(map, scoreByH3);
-
-    // Fit to the metro the first time real geometry arrives.
-    map.fitBounds(
-      [
-        [metro.bbox.minLng, metro.bbox.minLat],
-        [metro.bbox.maxLng, metro.bbox.maxLat],
-      ],
-      { padding, duration: 0 },
-    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapReady, geometryKey]);
+
+  // --- Camera --------------------------------------------------------------
+  /**
+   * Padding as a ref as well as a prop.
+   *
+   * Handlers installed once still need the current value, and the selection
+   * effect must not re-run — and re-centre — merely because the bottom sheet
+   * was dragged.
+   */
+  const paddingRef = useRef(padding);
+  useEffect(() => {
+    paddingRef.current = padding;
+  }, [padding]);
+
+  const metroBounds = useMemo<LngLatBoundsLike>(
+    () => [
+      [metro.bbox.minLng, metro.bbox.minLat],
+      [metro.bbox.maxLng, metro.bbox.maxLat],
+    ],
+    [metro.bbox],
+  );
+
+  /**
+   * Whether the user has taken the camera over.
+   *
+   * Programmatic moves (`fitBounds`, `easeTo`) carry no `originalEvent`; a drag,
+   * a wheel, a pinch or a NavigationControl click does. Once someone has framed
+   * their own view, re-framing the metro under them would be the app fighting
+   * the user — so from then on a box change only re-applies padding.
+   */
+  const userFramedRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const onMoveStart = (event: { originalEvent?: unknown }) => {
+      if (event.originalEvent) userFramedRef.current = true;
+    };
+    map.on("movestart", onMoveStart);
+    map.on("zoomstart", onMoveStart);
+    return () => {
+      map.off("movestart", onMoveStart);
+      map.off("zoomstart", onMoveStart);
+    };
+  }, []);
+
+  /**
+   * Frame the metro, and keep it framed as the box changes.
+   *
+   * This used to be a single `fitBounds` inside the layer effect, keyed on
+   * `[mapReady, geometryKey]` — so it ran exactly once, against whatever box
+   * existed at the moment the style finished parsing, and never again:
+   *
+   *  - On compact the first fit ran with `padding.bottom = 16`, because
+   *    `BottomSheet` reports its height in an effect and had not measured yet.
+   *    The sheet then covered the bottom half of what had just been framed.
+   *  - Opening a cell's detail panel takes 420px off the map's width. `resize()`
+   *    holds centre and zoom, so the metro was cropped rather than re-fit.
+   *  - `setPadding` on its own re-centres into the padded box without touching
+   *    zoom, which slides the metro out of frame instead of shrinking it to fit.
+   *
+   * Depending on `boxSize` and `padding` — and always fitting the *same*
+   * bounds — makes it idempotent: no drift, no zoom ratchet across repeated
+   * open/close cycles.
+   *
+   * `setPadding` first, then a `fitBounds` carrying **no** padding option, is
+   * deliberate and is not the same as passing `{ padding }`:
+   * `_fitInternal` deletes the option before easing, so a padded `fitBounds`
+   * frames correctly once and then leaves `transform.padding` at zero — after
+   * which `easeTo({ center })` recentres a selected cell into the middle of the
+   * whole canvas, i.e. behind the bottom sheet. Setting it on the transform
+   * makes the padding stick for every later camera move. The two must not be
+   * combined: `cameraForBoxAndBearing` sums `transform.padding` and the option,
+   * so doing both would reserve the sheet's height twice.
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !boxSize || zones.length === 0) return;
+
+    map.setPadding(padding);
+    if (userFramedRef.current) return;
+
+    map.fitBounds(metroBounds, { duration: 0 });
+  }, [mapReady, geometryKey, boxSize, padding, metroBounds, zones.length]);
 
   // --- Click to select -----------------------------------------------------
   useEffect(() => {
@@ -326,7 +435,10 @@ export function ZoneMap({
     const centroid = centroidByH3.get(selectedH3);
     if (!centroid) return;
 
-    if (!map.getBounds().contains([centroid.lng, centroid.lat])) {
+    // `map.getBounds()` describes the whole canvas and knows nothing about
+    // padding, so a cell sitting behind the bottom sheet counted as visible and
+    // picking it from the ranked list moved nothing at all.
+    if (!isPointVisible(map, [centroid.lng, centroid.lat], paddingRef.current)) {
       map.easeTo({ center: [centroid.lng, centroid.lat], duration: 500 });
     }
   }, [selectedH3, centroidByH3]);
@@ -336,11 +448,6 @@ export function ZoneMap({
     if (!map) return;
     applyPinned(map, pinnedH3);
   }, [pinnedH3]);
-
-  // --- Keep overlaying chrome out of the way -------------------------------
-  useEffect(() => {
-    mapRef.current?.setPadding(padding);
-  }, [padding]);
 
   return (
     <div className="relative h-full w-full">
@@ -387,6 +494,20 @@ export function ZoneMap({
 
 // ---------------------------------------------------------------------------
 
+/** Projects the point, then asks `camera.ts` whether it lands in view. */
+function isPointVisible(
+  map: MapLibreMap,
+  point: [number, number],
+  padding: Padding,
+): boolean {
+  const canvas = map.getCanvas();
+  return isPointInPaddedBox(
+    map.project(point),
+    { width: canvas.clientWidth, height: canvas.clientHeight },
+    padding,
+  );
+}
+
 /**
  * Run `fn` once the style can accept sources and layers.
  *
@@ -418,8 +539,8 @@ function addZoneLayers(map: MapLibreMap, zones: Zone[], isDark: boolean) {
         "fill-opacity": [
           "case",
           ["==", ["coalesce", ["feature-state", "score"], -1], -1],
-          0.25,
-          0.72,
+          EXCLUDED_FILL_OPACITY,
+          SCORED_FILL_OPACITY,
         ] as never,
       },
     });

@@ -48,8 +48,21 @@ export function scaleStops(isDark: boolean): ScaleStop[] {
 
 /** Zones that failed a hard filter: present, but visibly not in the running. */
 export function excludedColor(isDark: boolean): string {
-  return isDark ? "#3a3f47" : "#c8ccd2";
+  return isDark ? "#4d545e" : "#c8ccd2";
 }
+
+/**
+ * Fill opacity for the two states a cell can be in.
+ *
+ * The excluded value is deliberately not much lower than the scored one. At
+ * 0.25 over the dark basemap (`#0d0f12`) excluded cells composited to roughly
+ * `#191b1f` — indistinguishable from bare background, so the ranked cells read
+ * as a lone island floating in empty space rather than as the dense part of a
+ * grid that covers the whole metro. Exported so the legend swatch and the map
+ * cannot drift apart.
+ */
+export const EXCLUDED_FILL_OPACITY = 0.45;
+export const SCORED_FILL_OPACITY = 0.72;
 
 /**
  * A MapLibre paint expression driven by `feature-state`.
